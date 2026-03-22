@@ -103,6 +103,52 @@ function formatStatNumber(value: number, maximumFractionDigits = 2): string {
   });
 }
 
+function getFaceitLevel(elo: number): number {
+  if (elo >= 2000) return 10;
+  if (elo >= 1751) return 9;
+  if (elo >= 1531) return 8;
+  if (elo >= 1351) return 7;
+  if (elo >= 1201) return 6;
+  if (elo >= 1051) return 5;
+  if (elo >= 901) return 4;
+  if (elo >= 751) return 3;
+  if (elo >= 501) return 2;
+  return 1;
+}
+
+function getLevelRingColor(level: number): string {
+  if (level === 10) return "#ff2a00";
+  if (level >= 8) return "#ff6a00";
+  if (level >= 4) return "#ffd21f";
+  if (level >= 2) return "#38e600";
+  return "#d9d9d9";
+}
+
+function LevelIcon({ level }: { level: number }) {
+  const ringColor = getLevelRingColor(level);
+
+  return (
+    <svg viewBox="0 0 100 100" className="h-10 w-10" aria-hidden="true">
+      <circle cx="50" cy="50" r="46" fill="#171923" stroke="#2c2f39" strokeWidth="2" />
+      <circle cx="50" cy="50" r="34" fill="#1b1d25" stroke="#2f333d" strokeWidth="10" />
+      <circle
+        cx="50"
+        cy="50"
+        r="34"
+        fill="none"
+        stroke={ringColor}
+        strokeWidth="10"
+        strokeLinecap="round"
+        strokeDasharray="168 220"
+        transform="rotate(132 50 50)"
+      />
+      <text x="50" y="58" textAnchor="middle" fontSize="34" fontWeight="800" fill={ringColor}>
+        {level}
+      </text>
+    </svg>
+  );
+}
+
 function getBestMapName(maps: Array<{ map: string; matches: number; winRate: number }>): string | null {
   if (!maps.length) {
     return null;
@@ -360,6 +406,7 @@ export default function App() {
           <ul className="divide-y divide-zinc-800/80 border-y border-zinc-800/80">
             {players.map((player) => {
               const bestMapName = getBestMapName(player.maps);
+              const faceitLevel = getFaceitLevel(player.elo);
 
               return (
               <li key={player.playerId} className="fade-in py-6 sm:py-8">
@@ -378,9 +425,12 @@ export default function App() {
                       {player.hasPremium ? <span className="ml-2 text-xs font-semibold uppercase tracking-wide text-yellow-300">Premium</span> : null}
                     </div>
                   </div>
-                  <div className="text-right">
-                    <p className={`text-3xl font-black sm:text-4xl ${player.elo < 2000 ? "text-orange-500" : "text-red-500"}`}>{player.elo}</p>
-                    <p className="text-xs uppercase tracking-wide text-zinc-500">текущее эло</p>
+                  <div className="flex items-center gap-3 text-right">
+                    <div>
+                      <p className={`text-3xl font-black sm:text-4xl ${player.elo < 2000 ? "text-orange-500" : "text-red-500"}`}>{player.elo}</p>
+                      <p className="text-xs uppercase tracking-wide text-zinc-500">level {faceitLevel}</p>
+                    </div>
+                    <LevelIcon level={faceitLevel} />
                   </div>
                 </div>
 
