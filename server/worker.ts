@@ -19,6 +19,7 @@ type PlayerViewModel = {
   playerId: string;
   avatar: string;
   faceitUrl: string;
+  hasPremium: boolean;
   elo: number;
   kd: number;
   avg: number;
@@ -46,6 +47,12 @@ type FaceitPlayer = {
   nickname: string;
   avatar?: string;
   faceit_url?: string;
+  membership_type?: string;
+  memberships?: unknown;
+  premium?: boolean;
+  has_premium?: boolean;
+  subscription_type?: string;
+  subscriptions?: unknown;
   games?: {
     [key: string]: {
       faceit_elo?: number;
@@ -162,6 +169,44 @@ function parseWinFlag(value: unknown): boolean | null {
     return false;
   }
   return null;
+}
+
+function detectPremium(player: FaceitPlayer): boolean {
+  if (typeof player.premium === "boolean") {
+    return player.premium;
+  }
+
+  if (typeof player.has_premium === "boolean") {
+    return player.has_premium;
+  }
+
+  const directTokens = [player.membership_type, player.subscription_type].map((entry) => normalizeToken(entry));
+  if (directTokens.some((token) => token.includes("premium"))) {
+    return true;
+  }
+
+  const collections = [player.memberships, player.subscriptions];
+  for (const value of collections) {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const token = normalizeToken(item);
+        if (token.includes("premium")) {
+          return true;
+        }
+      }
+    }
+
+    if (value && typeof value === "object") {
+      for (const nested of Object.values(value as Record<string, unknown>)) {
+        const token = normalizeToken(nested);
+        if (token.includes("premium")) {
+          return true;
+        }
+      }
+    }
+  }
+
+  return false;
 }
 
 function pickExistingValue(record: Record<string, unknown> | undefined, keys: string[]): unknown {
@@ -572,6 +617,7 @@ async function loadPlayerStats(nickname: string, env: Env): Promise<PlayerViewMo
     playerId: player.player_id,
     avatar: player.avatar || FALLBACK_AVATAR,
     faceitUrl: player.faceit_url || `https://www.faceit.com/ru/players/${player.nickname}`,
+    hasPremium: detectPremium(player),
     elo: parseNumber(player.games?.[GAME_ID]?.faceit_elo),
     kd,
     avg: avgData.avg,

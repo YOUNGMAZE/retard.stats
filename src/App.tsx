@@ -17,6 +17,7 @@ type PlayerViewModel = {
   playerId: string;
   avatar: string;
   faceitUrl: string;
+  hasPremium: boolean;
   elo: number;
   kd: number;
   avg: number;
@@ -83,6 +84,7 @@ function normalizePlayer(value: unknown): PlayerViewModel | null {
     playerId,
     avatar: String(source.avatar ?? ""),
     faceitUrl: buildFaceitProfileUrl(nickname),
+    hasPremium: Boolean(source.hasPremium),
     elo: Number.isFinite(Number(source.elo)) ? Number(source.elo) : 0,
     kd: Number.isFinite(Number(source.kd)) ? Number(source.kd) : 0,
     avg: Number.isFinite(Number(source.avg)) ? Number(source.avg) : 0,
@@ -373,13 +375,11 @@ export default function App() {
                       >
                         {player.nickname}
                       </a>
-                      <div className="mt-1 flex flex-wrap items-center gap-3 text-xs sm:text-sm">
-                        <span className="text-zinc-400">FACEIT ELO</span>
-                      </div>
+                      {player.hasPremium ? <span className="ml-2 text-xs font-semibold uppercase tracking-wide text-yellow-300">Premium</span> : null}
                     </div>
                   </div>
                   <div className="text-right">
-                    <p className={`text-3xl font-black sm:text-4xl ${player.elo < 2000 ? "text-orange-300" : "text-rose-400"}`}>{player.elo}</p>
+                    <p className={`text-3xl font-black sm:text-4xl ${player.elo < 2000 ? "text-orange-500" : "text-red-500"}`}>{player.elo}</p>
                     <p className="text-xs uppercase tracking-wide text-zinc-500">текущее эло</p>
                   </div>
                 </div>
