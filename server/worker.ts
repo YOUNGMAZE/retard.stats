@@ -6,6 +6,7 @@ const MOSCOW_UTC_OFFSET_HOURS = 3;
 const FALLBACK_AVATAR = "https://cdn-frontend.faceit-cdn.net/web/300/src/app/assets/images/no-avatar.jpg";
 const CACHE_TTL_MS = 300_000;
 const HISTORY_LIMIT = 100;
+const PLAYER_CACHE_TTL_MS = 120_000;
 
 type WindowStats = {
   matches: number;
@@ -31,6 +32,12 @@ type PlayerViewModel = {
 type ApiStatsResponse = {
   updatedAtIso: string;
   players: PlayerViewModel[];
+  error?: string;
+};
+
+type PlayerApiResponse = {
+  updatedAtIso: string;
+  player: PlayerViewModel | null;
   error?: string;
 };
 
@@ -92,6 +99,7 @@ type Env = {
 
 let memoryCache: { expiresAt: number; payload: ApiStatsResponse } | null = null;
 let lastSuccessfulPayload: ApiStatsResponse | null = null;
+const playerMemoryCache = new Map<string, { expiresAt: number; payload: PlayerViewModel }>();
 
 function json(data: unknown, init?: ResponseInit): Response {
   return new Response(JSON.stringify(data), {
@@ -238,10 +246,10 @@ function isFinishedMatch(match: PlayerMatch): boolean {
   return Boolean(match.finished_at);
 }
 
-async function faceitFetch<T>(path: string, env: Env): Promise<T> {
+async function faceitFetch<T>(path: string, env: Env, retries = 2): Promise<T> {
   const url = `${FACEIT_API_BASE_URL}${path}`;
 
-  for (let attempt = 1; attempt <= 2; attempt += 1) {
+  for (let attempt = 1; attempt <= retries; attempt += 1) {
     const response = await fetch(url, {
       headers: {
         Authorization: `Bearer ${env.FACEIT_API_KEY}`,
@@ -254,7 +262,7 @@ async function faceitFetch<T>(path: string, env: Env): Promise<T> {
     }
 
     const shouldRetry = response.status === 429 || response.status >= 500;
-    if (!shouldRetry || attempt === 2) {
+    if (!shouldRetry || attempt === retries) {
       throw new Error(`FACEIT API error ${response.status}`);
     }
 
@@ -386,6 +394,40 @@ async function fetchRecentHistory(playerId: string, env: Env): Promise<PlayerMat
   return response.items ?? [];
 }
 
+async function fetchMatchStats(matchId: string, env: Env): Promise<FaceitMatchStats | null> {
+  if (!matchId) {
+    return null;
+  }
+
+  try {
+    return await faceitFetch<FaceitMatchStats>(`/matches/${matchId}/stats`, env, 1);
+  } catch {
+    return null;
+  }
+}
+
+function extractKillsFromMatchStats(matchStats: FaceitMatchStats | null, playerId: string): number | null {
+  if (!matchStats?.rounds?.length) {
+    return null;
+  }
+
+  for (const round of matchStats.rounds) {
+    for (const team of round.teams ?? []) {
+      for (const player of team.players ?? []) {
+        if (player.player_id !== playerId) {
+          continue;
+        }
+
+        const rawKills = findValueByKey(player.player_stats, ["Kills", "kills", "K", "Total Kills", "total_kills", "i6"]);
+        const parsed = parseDecimal(rawKills);
+        return parsed > 0 || String(rawKills ?? "").trim() === "0" ? parsed : null;
+      }
+    }
+  }
+
+  return null;
+}
+
 function resolveKillsFromHistory(match: PlayerMatch): number | null {
   const source = match.stats as Record<string, unknown> | undefined;
   if (!source) {
@@ -402,7 +444,9 @@ function resolveKillsFromHistory(match: PlayerMatch): number | null {
 }
 
 async function calculateLastMatchesAvgKills(
+  playerId: string,
   history: PlayerMatch[],
+  env: Env,
   lifetime: Record<string, unknown> | undefined,
 ): Promise<{ avg: number; resolvedMatches: number }> {
   const matches = history
@@ -416,6 +460,18 @@ async function calculateLastMatchesAvgKills(
 
   const kills: number[] = [];
   for (const match of matches) {
+    const matchId = String(match.match_id ?? "");
+    if (!matchId) {
+      continue;
+    }
+
+    const matchStats = await fetchMatchStats(matchId, env);
+    const fromMatchStats = extractKillsFromMatchStats(matchStats, playerId);
+    if (fromMatchStats !== null) {
+      kills.push(fromMatchStats);
+      continue;
+    }
+
     const fromHistory = resolveKillsFromHistory(match);
     if (fromHistory !== null) {
       kills.push(fromHistory);
@@ -449,6 +505,11 @@ function extractTotalStats(lifetime: Record<string, unknown> | undefined): Windo
 }
 
 async function loadPlayerStats(nickname: string, env: Env): Promise<PlayerViewModel> {
+  const cached = playerMemoryCache.get(nickname.toLowerCase());
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.payload;
+  }
+
   const player = await faceitFetch<FaceitPlayer>(`/players?nickname=${encodeURIComponent(nickname)}`, env);
   const stats = await faceitFetch<FaceitPlayerStats>(`/players/${player.player_id}/stats/${GAME_ID}`, env);
 
@@ -461,12 +522,12 @@ async function loadPlayerStats(nickname: string, env: Env): Promise<PlayerViewMo
   const [day, month, avgData] = await Promise.all([
     summarizeMatches(daySource, player.player_id),
     summarizeMatches(monthSource, player.player_id),
-    calculateLastMatchesAvgKills(history, lifetime),
+    calculateLastMatchesAvgKills(player.player_id, history, env, lifetime),
   ]);
 
   const kd = parseDecimal(findValueByKey(lifetime, ["Average K/D Ratio", "Average KD Ratio", "K/D Ratio", "K/D"]));
 
-  return {
+  const payload: PlayerViewModel = {
     nickname: player.nickname,
     playerId: player.player_id,
     avatar: player.avatar || FALLBACK_AVATAR,
@@ -480,6 +541,13 @@ async function loadPlayerStats(nickname: string, env: Env): Promise<PlayerViewMo
     month,
     total: extractTotalStats(lifetime),
   };
+
+  playerMemoryCache.set(nickname.toLowerCase(), {
+    expiresAt: Date.now() + PLAYER_CACHE_TTL_MS,
+    payload,
+  });
+
+  return payload;
 }
 
 function pickCorsOrigin(request: Request, env: Env): string {
@@ -521,7 +589,7 @@ export default {
       return json({ ok: true }, { headers });
     }
 
-    if (url.pathname !== "/api/stats") {
+    if (url.pathname !== "/api/stats" && url.pathname !== "/api/player-stats") {
       return json({ error: "Not Found" }, { status: 404, headers });
     }
 
@@ -530,6 +598,30 @@ export default {
     }
 
     try {
+      if (url.pathname === "/api/player-stats") {
+        const nickname = (url.searchParams.get("nickname") ?? "").trim();
+        if (!nickname) {
+          return json({ error: "nickname is required" }, { status: 400, headers });
+        }
+
+        try {
+          const player = await loadPlayerStats(nickname, env);
+          const payload: PlayerApiResponse = {
+            updatedAtIso: new Date().toISOString(),
+            player,
+          };
+          return json(payload, { headers });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Unknown server error";
+          const payload: PlayerApiResponse = {
+            updatedAtIso: new Date().toISOString(),
+            player: null,
+            error: message,
+          };
+          return json(payload, { status: 200, headers });
+        }
+      }
+
       if (memoryCache && memoryCache.expiresAt > Date.now()) {
         return json(memoryCache.payload, { headers });
       }

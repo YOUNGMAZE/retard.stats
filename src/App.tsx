@@ -4,6 +4,7 @@ const REFRESH_MS = 60_000;
 const LOCAL_CACHE_KEY = "retard-stats-cache-v1";
 const DEFAULT_STATS_API_URL = "https://retard-stats-api.wladjika25.workers.dev";
 const STATS_API_URL = (import.meta.env.VITE_STATS_API_URL || DEFAULT_STATS_API_URL).trim().replace(/\/+$/, "");
+const PLAYER_NICKNAMES = ["mazedaddy", "SEXN", "unborrasq"];
 
 type WindowStats = {
   matches: number;
@@ -29,6 +30,12 @@ type PlayerViewModel = {
 type ApiStatsResponse = {
   updatedAtIso: string;
   players: PlayerViewModel[];
+  error?: string;
+};
+
+type PlayerApiResponse = {
+  updatedAtIso: string;
+  player: PlayerViewModel | null;
   error?: string;
 };
 
@@ -98,38 +105,69 @@ export default function App() {
     setIsRefreshing(true);
 
     try {
-      const response = await fetch(`${STATS_API_URL}/api/stats`, {
-        headers: { Accept: "application/json" },
-      });
+      const settled = await Promise.allSettled(
+        PLAYER_NICKNAMES.map(async (nickname) => {
+          const response = await fetch(`${STATS_API_URL}/api/player-stats?nickname=${encodeURIComponent(nickname)}`, {
+            headers: { Accept: "application/json" },
+          });
 
-      if (!response.ok) {
-        let serverMessage = "";
-        try {
-          const serverPayload = (await response.json()) as { error?: string };
-          serverMessage = serverPayload.error ?? "";
-        } catch {
-          // Ignore non-json error payloads.
+          if (!response.ok) {
+            let serverMessage = "";
+            try {
+              const serverPayload = (await response.json()) as { error?: string };
+              serverMessage = serverPayload.error ?? "";
+            } catch {
+              // Ignore non-json error payloads.
+            }
+            throw new Error(serverMessage ? `Ошибка API: ${response.status} (${serverMessage})` : `Ошибка API: ${response.status}`);
+          }
+
+          const payload = (await response.json()) as PlayerApiResponse;
+          if (!payload.player) {
+            throw new Error(payload.error || `Игрок ${nickname}: нет данных`);
+          }
+
+          return {
+            player: payload.player,
+            updatedAtIso: payload.updatedAtIso,
+          };
+        }),
+      );
+
+      const loadedPlayers: PlayerViewModel[] = [];
+      const updatedAtStamps: number[] = [];
+      const errors: string[] = [];
+
+      for (const result of settled) {
+        if (result.status === "fulfilled") {
+          loadedPlayers.push(result.value.player);
+          updatedAtStamps.push(new Date(result.value.updatedAtIso).getTime());
+        } else {
+          errors.push(result.reason instanceof Error ? result.reason.message : "Ошибка загрузки игрока");
         }
-        throw new Error(serverMessage ? `Ошибка API: ${response.status} (${serverMessage})` : `Ошибка API: ${response.status}`);
       }
 
-      const payload = (await response.json()) as ApiStatsResponse;
-      if (!Array.isArray(payload.players)) {
-        throw new Error("Сервер вернул некорректный формат данных");
-      }
+      const orderedPlayers = PLAYER_NICKNAMES.map(
+        (nickname) => loadedPlayers.find((player) => player.nickname.toLowerCase() === nickname.toLowerCase()) ?? null,
+      ).filter((item): item is PlayerViewModel => item !== null);
 
-      if (!payload.players.length) {
+      if (!orderedPlayers.length) {
         if (playersRef.current.length > 0) {
           setErrorText("FACEIT API временно недоступен. Показаны последние сохраненные данные.");
         } else {
-          setErrorText(payload.error || "FACEIT API временно не вернул данные.");
+          setErrorText(errors[0] || "FACEIT API временно не вернул данные.");
         }
         return;
       }
 
+      const payload: ApiStatsResponse = {
+        updatedAtIso: new Date(Math.max(...updatedAtStamps, Date.now())).toISOString(),
+        players: orderedPlayers,
+      };
+
       setPlayers(payload.players);
       setUpdatedAt(new Date(payload.updatedAtIso));
-      setErrorText(payload.error ? `Часть данных могла не обновиться: ${payload.error}` : null);
+      setErrorText(errors.length ? `Часть данных могла не обновиться: ${errors[0]}` : null);
       try {
         localStorage.setItem(LOCAL_CACHE_KEY, JSON.stringify(payload));
       } catch {
