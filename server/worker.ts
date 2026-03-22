@@ -129,6 +129,25 @@ function parseDecimal(value: unknown): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function parsePercent(value: unknown): number {
+  const raw = String(value ?? "").trim();
+  if (!raw) {
+    return 0;
+  }
+
+  const parsed = parseDecimal(raw);
+  if (!Number.isFinite(parsed)) {
+    return 0;
+  }
+
+  // FACEIT may return win rate as 0.56 (ratio) or 56 / "56%" (percent).
+  if (!raw.includes("%") && parsed > 0 && parsed <= 1) {
+    return parsed * 100;
+  }
+
+  return parsed;
+}
+
 function parseNumber(value: unknown): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
@@ -369,7 +388,7 @@ function extractMapMatches(stats: FaceitPlayerStats): Array<{ map: string; match
       continue;
     }
 
-    const directWinRate = parseDecimal(
+    const directWinRate = parsePercent(
       findValueByKey(segment.stats, ["Win Rate %", "Win Rate", "Winrate", "win_rate", "win_rate_pct", "win_rate_percent"]),
     );
     const wins = parseNumber(findValueByKey(segment.stats, ["Wins", "wins"]));
