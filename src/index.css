@@ -1,0 +1,62 @@
+@import "tailwindcss";
+
+@keyframes ambientDrift {
+  0% {
+    transform: translate3d(0, 0, 0) scale(1);
+    opacity: 0.45;
+  }
+  50% {
+    transform: translate3d(1%, -1%, 0) scale(1.02);
+    opacity: 0.6;
+  }
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+    opacity: 0.45;
+  }
+}
+
+@keyframes pulseDot {
+  0% {
+    box-shadow: 0 0 0 0 rgb(74 222 128 / 0.6);
+  }
+  100% {
+    box-shadow: 0 0 0 10px rgb(74 222 128 / 0);
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.hero-ambient {
+  background:
+    radial-gradient(circle at 15% 20%, rgb(251 146 60 / 0.24), transparent 34%),
+    radial-gradient(circle at 82% 35%, rgb(59 130 246 / 0.14), transparent 38%),
+    radial-gradient(circle at 45% 82%, rgb(16 185 129 / 0.12), transparent 42%);
+  animation: ambientDrift 14s ease-in-out infinite;
+}
+
+.pulse-dot {
+  animation: pulseDot 1.4s ease-out infinite;
+}
+
+.spinner {
+  animation: spin 0.85s linear infinite;
+}
+
+.fade-in {
+  animation: fadeIn 0.45s ease-out;
+}
