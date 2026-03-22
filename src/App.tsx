@@ -432,7 +432,7 @@ export default function App() {
                       </p>
                       <p className="mt-1 text-xs uppercase tracking-wide text-zinc-500">level {faceitLevel}</p>
                     </div>
-                    <LevelIcon level={faceitLevel} className="h-12 w-12 sm:h-14 sm:w-14" />
+                    <LevelIcon level={faceitLevel} className="h-12 w-12 shrink-0 -translate-y-1 sm:h-14 sm:w-14 sm:-translate-y-1.5" />
                   </div>
                 </div>
 
