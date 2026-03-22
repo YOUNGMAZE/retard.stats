@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 const REFRESH_MS = 60_000;
-const STATS_API_URL = (import.meta.env.VITE_STATS_API_URL ?? "").trim();
+const LOCAL_CACHE_KEY = "retard-stats-cache-v1";
+const DEFAULT_STATS_API_URL = "https://retard-stats-api.wladjika25.workers.dev";
+const STATS_API_URL = (import.meta.env.VITE_STATS_API_URL || DEFAULT_STATS_API_URL).trim().replace(/\/+$/, "");
 
 type WindowStats = {
   matches: number;
@@ -27,6 +29,7 @@ type PlayerViewModel = {
 type ApiStatsResponse = {
   updatedAtIso: string;
   players: PlayerViewModel[];
+  error?: string;
 };
 
 function formatStatNumber(value: number, maximumFractionDigits = 2): string {
@@ -59,6 +62,31 @@ export default function App() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
   const [nowTick, setNowTick] = useState(Date.now());
+  const playersRef = useRef<PlayerViewModel[]>([]);
+
+  useEffect(() => {
+    playersRef.current = players;
+  }, [players]);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(LOCAL_CACHE_KEY);
+      if (!raw) {
+        return;
+      }
+
+      const cached = JSON.parse(raw) as ApiStatsResponse;
+      if (!Array.isArray(cached.players)) {
+        return;
+      }
+
+      setPlayers(cached.players);
+      setUpdatedAt(new Date(cached.updatedAtIso));
+      setIsInitialLoading(false);
+    } catch {
+      // Ignore broken cache payloads and continue with network loading.
+    }
+  }, []);
 
   const loadStats = useCallback(async () => {
     if (!STATS_API_URL) {
@@ -75,7 +103,14 @@ export default function App() {
       });
 
       if (!response.ok) {
-        throw new Error(`Ошибка API: ${response.status}`);
+        let serverMessage = "";
+        try {
+          const serverPayload = (await response.json()) as { error?: string };
+          serverMessage = serverPayload.error ?? "";
+        } catch {
+          // Ignore non-json error payloads.
+        }
+        throw new Error(serverMessage ? `Ошибка API: ${response.status} (${serverMessage})` : `Ошибка API: ${response.status}`);
       }
 
       const payload = (await response.json()) as ApiStatsResponse;
@@ -83,12 +118,35 @@ export default function App() {
         throw new Error("Сервер вернул некорректный формат данных");
       }
 
+      if (!payload.players.length) {
+        if (playersRef.current.length > 0) {
+          setErrorText("FACEIT API временно недоступен. Показаны последние сохраненные данные.");
+        } else {
+          setErrorText(payload.error || "FACEIT API временно не вернул данные.");
+        }
+        return;
+      }
+
       setPlayers(payload.players);
       setUpdatedAt(new Date(payload.updatedAtIso));
-      setErrorText(null);
+      setErrorText(payload.error ? `Часть данных могла не обновиться: ${payload.error}` : null);
+      try {
+        localStorage.setItem(LOCAL_CACHE_KEY, JSON.stringify(payload));
+      } catch {
+        // Non-blocking cache write.
+      }
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Не удалось загрузить данные";
-      setErrorText(message);
+      const rawMessage = error instanceof Error ? error.message : "Не удалось загрузить данные";
+      const normalized = rawMessage.toLowerCase();
+      const networkLikeError = normalized.includes("failed to fetch") || normalized.includes("networkerror") || normalized.includes("load failed");
+
+      if (playersRef.current.length > 0) {
+        setErrorText("Временная проблема с API. Показаны последние сохраненные данные.");
+      } else if (networkLikeError) {
+        setErrorText("Сеть недоступна или API не отвечает. Попробуй обновить страницу через 10-20 секунд.");
+      } else {
+        setErrorText(rawMessage);
+      }
     } finally {
       setIsInitialLoading(false);
       setIsRefreshing(false);

@@ -32,7 +32,7 @@ jobs:
 
       - name: Build
         env:
-          VITE_STATS_API_URL: ${{ secrets.VITE_STATS_API_URL }}
+          VITE_STATS_API_URL: https://retard-stats-api.wladjika25.workers.dev
         run: npm run build -- --base=/${{ github.event.repository.name }}/
 
       - name: Setup Pages

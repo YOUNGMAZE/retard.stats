@@ -4,7 +4,8 @@ const AVG_SAMPLE_SIZE = 30;
 const PLAYER_NICKNAMES = ["mazedaddy", "SEXN", "unborrasq"];
 const MOSCOW_UTC_OFFSET_HOURS = 3;
 const FALLBACK_AVATAR = "https://cdn-frontend.faceit-cdn.net/web/300/src/app/assets/images/no-avatar.jpg";
-const CACHE_TTL_MS = 45_000;
+const CACHE_TTL_MS = 300_000;
+const HISTORY_LIMIT = 100;
 
 type WindowStats = {
   matches: number;
@@ -30,6 +31,7 @@ type PlayerViewModel = {
 type ApiStatsResponse = {
   updatedAtIso: string;
   players: PlayerViewModel[];
+  error?: string;
 };
 
 type FaceitPlayer = {
@@ -69,6 +71,7 @@ type PlayerMatch = {
     i10?: string;
     [key: string]: unknown;
   };
+  [key: string]: unknown;
 };
 
 type FaceitMatchStats = {
@@ -88,6 +91,7 @@ type Env = {
 };
 
 let memoryCache: { expiresAt: number; payload: ApiStatsResponse } | null = null;
+let lastSuccessfulPayload: ApiStatsResponse | null = null;
 
 function json(data: unknown, init?: ResponseInit): Response {
   return new Response(JSON.stringify(data), {
@@ -133,6 +137,27 @@ function parseWinFlag(value: unknown): boolean | null {
   return null;
 }
 
+function pickExistingValue(record: Record<string, unknown> | undefined, keys: string[]): unknown {
+  if (!record) {
+    return undefined;
+  }
+
+  for (const key of keys) {
+    if (key in record) {
+      return record[key];
+    }
+  }
+
+  const normalized = new Set(keys.map((key) => normalizeToken(key)));
+  for (const [key, value] of Object.entries(record)) {
+    if (normalized.has(normalizeToken(key))) {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
 function findValueByKey(record: Record<string, unknown> | undefined, keys: string[]): unknown {
   if (!record) {
     return undefined;
@@ -152,6 +177,20 @@ function findValueByKey(record: Record<string, unknown> | undefined, keys: strin
   }
 
   return undefined;
+}
+
+function normalizeFactionToken(value: unknown): string {
+  const token = normalizeToken(value);
+  if (!token) {
+    return "";
+  }
+  if (token === "1" || token === "f1" || token === "faction1") {
+    return "f1";
+  }
+  if (token === "2" || token === "f2" || token === "faction2") {
+    return "f2";
+  }
+  return token;
 }
 
 function getMoscowNow(): Date {
@@ -202,7 +241,7 @@ function isFinishedMatch(match: PlayerMatch): boolean {
 async function faceitFetch<T>(path: string, env: Env): Promise<T> {
   const url = `${FACEIT_API_BASE_URL}${path}`;
 
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
     const response = await fetch(url, {
       headers: {
         Authorization: `Bearer ${env.FACEIT_API_KEY}`,
@@ -215,7 +254,7 @@ async function faceitFetch<T>(path: string, env: Env): Promise<T> {
     }
 
     const shouldRetry = response.status === 429 || response.status >= 500;
-    if (!shouldRetry || attempt === 3) {
+    if (!shouldRetry || attempt === 2) {
       throw new Error(`FACEIT API error ${response.status}`);
     }
 
@@ -226,41 +265,63 @@ async function faceitFetch<T>(path: string, env: Env): Promise<T> {
 }
 
 function detectWinForPlayer(match: PlayerMatch, playerId: string): boolean | null {
-  const direct = parseWinFlag(match.i10 ?? match.stats?.i10);
+  const direct = parseWinFlag(
+    match.i10 ??
+      pickExistingValue(match.stats as Record<string, unknown> | undefined, [
+        "i10",
+        "result",
+        "Result",
+        "win",
+        "Win",
+        "won",
+        "Won",
+        "is_winner",
+      ]),
+  );
   if (direct !== null) {
     return direct;
   }
 
-  const winner = match.results?.winner ?? match.winner;
+  const winner = normalizeFactionToken(
+    match.results?.winner ??
+      match.winner ??
+      pickExistingValue(match.stats as Record<string, unknown> | undefined, ["winner", "Winner", "winning_team", "winning faction"]),
+  );
   if (!winner || !match.teams) {
     return null;
   }
 
-  const normalizedWinner = normalizeToken(winner);
+  const normalizedWinner = winner;
+
+  // Some history payloads expose player's faction directly without full roster.
+  const directFaction = normalizeFactionToken(
+    match.faction ??
+      match.team ??
+      pickExistingValue(match.stats as Record<string, unknown> | undefined, ["faction", "team", "player_faction", "i1"]),
+  );
+  if (directFaction) {
+    return directFaction === normalizedWinner;
+  }
 
   for (const [teamKey, team] of Object.entries(match.teams)) {
-    const containsPlayer = team.roster?.some((entry) => entry.player_id === playerId);
+    const rosterEntries = Array.isArray(team.roster) ? team.roster : [];
+    const dynamicPlayers = Array.isArray((team as { players?: unknown[] }).players) ? ((team as { players?: Array<Record<string, unknown>> }).players ?? []) : [];
+    const containsPlayer =
+      rosterEntries.some((entry) => entry.player_id === playerId) ||
+      dynamicPlayers.some((entry) => {
+        const pid = String(entry.player_id ?? entry.playerId ?? "");
+        return pid === playerId;
+      });
     if (!containsPlayer) {
       continue;
     }
 
     const tokens = new Set([
-      normalizeToken(teamKey),
-      normalizeToken(team.faction_id),
-      normalizeToken(team.team_id),
+      normalizeFactionToken(teamKey),
+      normalizeFactionToken(team.faction_id),
+      normalizeFactionToken(team.team_id),
       normalizeToken(team.name),
     ]);
-
-    if (tokens.has("faction1") || tokens.has("f1") || tokens.has("1")) {
-      tokens.add("f1");
-      tokens.add("faction1");
-      tokens.add("1");
-    }
-    if (tokens.has("faction2") || tokens.has("f2") || tokens.has("2")) {
-      tokens.add("f2");
-      tokens.add("faction2");
-      tokens.add("2");
-    }
 
     return tokens.has(normalizedWinner);
   }
@@ -314,109 +375,67 @@ function extractMapMatches(stats: FaceitPlayerStats): Array<{ map: string; match
     .sort((a, b) => b.matches - a.matches || a.map.localeCompare(b.map));
 }
 
-async function fetchAllMatchesForWindow(playerId: string, fromUnix: number, toUnix: number, env: Env): Promise<PlayerMatch[]> {
-  const pageLimit = 100;
-  const maxMatches = 300;
-  let offset = 0;
-  const all: PlayerMatch[] = [];
+async function fetchRecentHistory(playerId: string, env: Env): Promise<PlayerMatch[]> {
+  const query = new URLSearchParams({
+    game: GAME_ID,
+    offset: "0",
+    limit: String(HISTORY_LIMIT),
+  });
 
-  while (offset < maxMatches) {
-    const query = new URLSearchParams({
-      game: GAME_ID,
-      from: String(fromUnix),
-      to: String(toUnix),
-      offset: String(offset),
-      limit: String(pageLimit),
-    });
-
-    const response = await faceitFetch<{ items?: PlayerMatch[] }>(`/players/${playerId}/history?${query.toString()}`, env);
-    const items = response.items ?? [];
-    all.push(...items);
-
-    if (items.length < pageLimit) {
-      break;
-    }
-
-    offset += pageLimit;
-  }
-
-  return all;
+  const response = await faceitFetch<{ items?: PlayerMatch[] }>(`/players/${playerId}/history?${query.toString()}`, env);
+  return response.items ?? [];
 }
 
-async function fetchRecentFinishedMatches(playerId: string, targetCount: number, env: Env): Promise<PlayerMatch[]> {
-  const pageLimit = 50;
-  const maxMatches = 250;
-  let offset = 0;
-  const collected: PlayerMatch[] = [];
-
-  while (offset < maxMatches && collected.length < targetCount) {
-    const query = new URLSearchParams({
-      game: GAME_ID,
-      offset: String(offset),
-      limit: String(pageLimit),
-    });
-
-    const response = await faceitFetch<{ items?: PlayerMatch[] }>(`/players/${playerId}/history?${query.toString()}`, env);
-    const items = response.items ?? [];
-
-    if (!items.length) {
-      break;
-    }
-
-    collected.push(...items.filter(isFinishedMatch));
-
-    if (items.length < pageLimit) {
-      break;
-    }
-    offset += pageLimit;
+function resolveKillsFromHistory(match: PlayerMatch): number | null {
+  const source = match.stats as Record<string, unknown> | undefined;
+  if (!source) {
+    return null;
   }
 
-  return collected
+  const rawKills = pickExistingValue(source, ["Kills", "kills", "K", "k", "Total Kills", "total_kills", "i6"]);
+  if (rawKills === undefined || rawKills === null || rawKills === "") {
+    return null;
+  }
+
+  const kills = parseDecimal(rawKills);
+  return Number.isFinite(kills) ? kills : null;
+}
+
+async function calculateLastMatchesAvgKills(
+  history: PlayerMatch[],
+  lifetime: Record<string, unknown> | undefined,
+): Promise<{ avg: number; resolvedMatches: number }> {
+  const matches = history
+    .filter(isFinishedMatch)
     .sort((a, b) => getMatchTimestamp(b) - getMatchTimestamp(a))
-    .slice(0, targetCount);
-}
+    .slice(0, AVG_SAMPLE_SIZE);
 
-async function resolveKillsForPlayer(matchId: string, playerId: string, env: Env): Promise<number | null> {
-  const matchStats = await faceitFetch<FaceitMatchStats>(`/matches/${matchId}/stats`, env);
-
-  for (const round of matchStats.rounds ?? []) {
-    for (const team of round.teams ?? []) {
-      const playerStats = team.players?.find((entry) => entry.player_id === playerId)?.player_stats;
-      if (!playerStats) {
-        continue;
-      }
-
-      const kills = parseDecimal(findValueByKey(playerStats, ["Kills", "kills", "K", "k", "Total Kills", "total_kills"]));
-      return Number.isFinite(kills) ? kills : null;
-    }
-  }
-
-  return null;
-}
-
-async function calculateLastMatchesAvgKills(playerId: string, env: Env): Promise<{ avg: number; resolvedMatches: number }> {
-  const matches = await fetchRecentFinishedMatches(playerId, AVG_SAMPLE_SIZE, env);
   if (!matches.length) {
     return { avg: 0, resolvedMatches: 0 };
   }
 
   const kills: number[] = [];
   for (const match of matches) {
-    if (!match.match_id) {
-      continue;
-    }
-    const value = await resolveKillsForPlayer(match.match_id, playerId, env);
-    if (value !== null) {
-      kills.push(value);
+    const fromHistory = resolveKillsFromHistory(match);
+    if (fromHistory !== null) {
+      kills.push(fromHistory);
     }
   }
 
-  if (!kills.length) {
-    return { avg: 0, resolvedMatches: 0 };
+  if (kills.length) {
+    const sum = kills.reduce((acc, item) => acc + item, 0);
+    return { avg: Math.round(sum / kills.length), resolvedMatches: kills.length };
   }
 
-  const sum = kills.reduce((acc, item) => acc + item, 0);
-  return { avg: Math.round(sum / kills.length), resolvedMatches: kills.length };
+  // Fallback to profile metric only when match-level kills are missing.
+  const lifetimeAvg = parseDecimal(
+    findValueByKey(lifetime, ["Average Kills", "Average Kills per Match", "Avg Kills", "average_kills", "avg_kills"]),
+  );
+  if (lifetimeAvg > 0) {
+    return { avg: Math.round(lifetimeAvg), resolvedMatches: 0 };
+  }
+
+  return { avg: 0, resolvedMatches: 0 };
 }
 
 function extractTotalStats(lifetime: Record<string, unknown> | undefined): WindowStats {
@@ -433,20 +452,18 @@ async function loadPlayerStats(nickname: string, env: Env): Promise<PlayerViewMo
   const player = await faceitFetch<FaceitPlayer>(`/players?nickname=${encodeURIComponent(nickname)}`, env);
   const stats = await faceitFetch<FaceitPlayerStats>(`/players/${player.player_id}/stats/${GAME_ID}`, env);
 
-  const nowUnix = Math.floor(Date.now() / 1000);
-  const [dayMatches, monthMatches, avgData] = await Promise.all([
-    fetchAllMatchesForWindow(player.player_id, startOfTodayUnixMoscow(), nowUnix, env),
-    fetchAllMatchesForWindow(player.player_id, startOfMonthUnixMoscow(), nowUnix, env),
-    calculateLastMatchesAvgKills(player.player_id, env),
-  ]);
+  const history = await fetchRecentHistory(player.player_id, env);
 
-  const strictDayMatches = dayMatches.filter(isMatchFromTodayMoscow);
-  const [day, month] = await Promise.all([
-    summarizeMatches(strictDayMatches, player.player_id),
-    summarizeMatches(monthMatches, player.player_id),
-  ]);
-
+  const daySource = history.filter(isMatchFromTodayMoscow);
+  const monthSource = history.filter((match) => getMatchTimestamp(match) >= startOfMonthUnixMoscow());
   const lifetime = stats.lifetime;
+
+  const [day, month, avgData] = await Promise.all([
+    summarizeMatches(daySource, player.player_id),
+    summarizeMatches(monthSource, player.player_id),
+    calculateLastMatchesAvgKills(history, lifetime),
+  ]);
+
   const kd = parseDecimal(findValueByKey(lifetime, ["Average K/D Ratio", "Average KD Ratio", "K/D Ratio", "K/D"]));
 
   return {
@@ -517,9 +534,26 @@ export default {
         return json(memoryCache.payload, { headers });
       }
 
-      const players: PlayerViewModel[] = [];
-      for (const nickname of PLAYER_NICKNAMES) {
-        players.push(await loadPlayerStats(nickname, env));
+      const settled = await Promise.allSettled(PLAYER_NICKNAMES.map((nickname) => loadPlayerStats(nickname, env)));
+      const players = settled
+        .filter((item): item is PromiseFulfilledResult<PlayerViewModel> => item.status === "fulfilled")
+        .map((item) => item.value);
+
+      if (!players.length) {
+        const fallbackPayload: ApiStatsResponse = lastSuccessfulPayload ?? {
+          updatedAtIso: new Date().toISOString(),
+          players: [],
+          error: "FACEIT API временно не вернул данные по игрокам",
+        };
+
+        return json(fallbackPayload, {
+          status: 200,
+          headers: {
+            ...headers,
+            "x-retard-stats-stale": "1",
+            "x-retard-stats-error": "FACEIT API временно не вернул данные по игрокам",
+          },
+        });
       }
 
       const payload: ApiStatsResponse = {
@@ -531,11 +565,37 @@ export default {
         expiresAt: Date.now() + CACHE_TTL_MS,
         payload,
       };
+      lastSuccessfulPayload = payload;
 
       return json(payload, { headers });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown server error";
-      return json({ error: message }, { status: 502, headers });
+      if (lastSuccessfulPayload) {
+        return json(lastSuccessfulPayload, {
+          status: 200,
+          headers: {
+            ...headers,
+            "x-retard-stats-stale": "1",
+            "x-retard-stats-error": message,
+          },
+        });
+      }
+
+      return json(
+        {
+          updatedAtIso: new Date().toISOString(),
+          players: [],
+          error: message,
+        },
+        {
+          status: 200,
+          headers: {
+            ...headers,
+            "x-retard-stats-stale": "1",
+            "x-retard-stats-error": message,
+          },
+        },
+      );
     }
   },
 };
