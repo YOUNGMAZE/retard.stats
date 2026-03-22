@@ -39,6 +39,57 @@ type PlayerApiResponse = {
   error?: string;
 };
 
+function normalizeWindowStats(value: unknown): WindowStats {
+  const source = (value ?? {}) as Partial<WindowStats>;
+  return {
+    matches: Number.isFinite(Number(source.matches)) ? Number(source.matches) : 0,
+    wins: Number.isFinite(Number(source.wins)) ? Number(source.wins) : 0,
+    losses: Number.isFinite(Number(source.losses)) ? Number(source.losses) : 0,
+  };
+}
+
+function normalizePlayer(value: unknown): PlayerViewModel | null {
+  const source = (value ?? {}) as Partial<PlayerViewModel>;
+  const nickname = String(source.nickname ?? "").trim();
+  const playerId = String(source.playerId ?? "").trim();
+  if (!nickname || !playerId) {
+    return null;
+  }
+
+  const mapsRaw = Array.isArray(source.maps) ? source.maps : [];
+  const maps = mapsRaw
+    .map((entry) => {
+      const mapName = String((entry as { map?: unknown })?.map ?? "").trim();
+      if (!mapName) {
+        return null;
+      }
+
+      const matches = Number((entry as { matches?: unknown })?.matches ?? 0);
+      const winRate = Number((entry as { winRate?: unknown })?.winRate ?? 0);
+      return {
+        map: mapName,
+        matches: Number.isFinite(matches) ? matches : 0,
+        winRate: Number.isFinite(winRate) ? winRate : 0,
+      };
+    })
+    .filter((entry): entry is { map: string; matches: number; winRate: number } => entry !== null);
+
+  return {
+    nickname,
+    playerId,
+    avatar: String(source.avatar ?? ""),
+    faceitUrl: String(source.faceitUrl ?? `https://www.faceit.com/ru/players/${nickname}`),
+    elo: Number.isFinite(Number(source.elo)) ? Number(source.elo) : 0,
+    kd: Number.isFinite(Number(source.kd)) ? Number(source.kd) : 0,
+    avg: Number.isFinite(Number(source.avg)) ? Number(source.avg) : 0,
+    avgMatchesCount: Number.isFinite(Number(source.avgMatchesCount)) ? Number(source.avgMatchesCount) : 0,
+    maps,
+    day: normalizeWindowStats(source.day),
+    month: normalizeWindowStats(source.month),
+    total: normalizeWindowStats(source.total),
+  };
+}
+
 function formatStatNumber(value: number, maximumFractionDigits = 2): string {
   return value.toLocaleString("ru-RU", {
     minimumFractionDigits: 0,
@@ -111,8 +162,15 @@ export default function App() {
         return;
       }
 
-      setPlayers(cached.players);
-      setUpdatedAt(new Date(cached.updatedAtIso));
+      const normalizedCachedPlayers = cached.players
+        .map((entry) => normalizePlayer(entry))
+        .filter((entry): entry is PlayerViewModel => entry !== null);
+      if (!normalizedCachedPlayers.length) {
+        return;
+      }
+
+      setPlayers(normalizedCachedPlayers);
+      setUpdatedAt(cached.updatedAtIso ? new Date(cached.updatedAtIso) : new Date());
       setIsInitialLoading(false);
     } catch {
       // Ignore broken cache payloads and continue with network loading.
@@ -147,12 +205,13 @@ export default function App() {
           }
 
           const payload = (await response.json()) as PlayerApiResponse;
-          if (!payload.player) {
+          const normalizedPlayer = normalizePlayer(payload.player);
+          if (!normalizedPlayer) {
             throw new Error(payload.error || `Игрок ${nickname}: нет данных`);
           }
 
           return {
-            player: payload.player,
+            player: normalizedPlayer,
             updatedAtIso: payload.updatedAtIso,
           };
         }),
