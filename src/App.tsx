@@ -39,6 +39,10 @@ type PlayerApiResponse = {
   error?: string;
 };
 
+function buildFaceitProfileUrl(nickname: string): string {
+  return `https://www.faceit.com/ru/players/${encodeURIComponent(nickname)}`;
+}
+
 function normalizeWindowStats(value: unknown): WindowStats {
   const source = (value ?? {}) as Partial<WindowStats>;
   return {
@@ -78,7 +82,7 @@ function normalizePlayer(value: unknown): PlayerViewModel | null {
     nickname,
     playerId,
     avatar: String(source.avatar ?? ""),
-    faceitUrl: String(source.faceitUrl ?? `https://www.faceit.com/ru/players/${nickname}`),
+    faceitUrl: buildFaceitProfileUrl(nickname),
     elo: Number.isFinite(Number(source.elo)) ? Number(source.elo) : 0,
     kd: Number.isFinite(Number(source.kd)) ? Number(source.kd) : 0,
     avg: Number.isFinite(Number(source.avg)) ? Number(source.avg) : 0,
@@ -375,7 +379,7 @@ export default function App() {
                     </div>
                   </div>
                   <div className="text-right">
-                    <p className="text-3xl font-black text-orange-300 sm:text-4xl">{player.elo}</p>
+                    <p className={`text-3xl font-black sm:text-4xl ${player.elo < 2000 ? "text-orange-300" : "text-rose-400"}`}>{player.elo}</p>
                     <p className="text-xs uppercase tracking-wide text-zinc-500">текущее эло</p>
                   </div>
                 </div>
@@ -405,7 +409,7 @@ export default function App() {
                            <div key={`${player.playerId}-${entry.map}`}>
                              {entry.map}: <b className="text-zinc-100">{entry.matches}</b>
                              <span className="text-zinc-500"> | WR </span>
-                             <b className="text-zinc-100">{formatStatNumber(entry.winRate, 1)}%</b>
+                              <b className={entry.winRate < 50 ? "text-rose-400" : "text-emerald-300"}>{formatStatNumber(entry.winRate, 1)}%</b>
                            </div>
                          ))}
                        </div>
