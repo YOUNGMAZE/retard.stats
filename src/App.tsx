@@ -124,11 +124,11 @@ function getLevelRingColor(level: number): string {
   return "#d9d9d9";
 }
 
-function LevelIcon({ level }: { level: number }) {
+function LevelIcon({ level, className = "h-12 w-12" }: { level: number; className?: string }) {
   const ringColor = getLevelRingColor(level);
 
   return (
-    <svg viewBox="0 0 100 100" className="h-10 w-10" aria-hidden="true">
+    <svg viewBox="0 0 100 100" className={className} aria-hidden="true">
       <circle cx="50" cy="50" r="46" fill="#171923" stroke="#2c2f39" strokeWidth="2" />
       <circle cx="50" cy="50" r="34" fill="#1b1d25" stroke="#2f333d" strokeWidth="10" />
       <circle
@@ -425,12 +425,14 @@ export default function App() {
                       {player.hasPremium ? <span className="ml-2 text-xs font-semibold uppercase tracking-wide text-yellow-300">Premium</span> : null}
                     </div>
                   </div>
-                  <div className="flex items-center gap-3 text-right">
-                    <div>
-                      <p className={`text-3xl font-black sm:text-4xl ${player.elo < 2000 ? "text-orange-500" : "text-red-500"}`}>{player.elo}</p>
-                      <p className="text-xs uppercase tracking-wide text-zinc-500">level {faceitLevel}</p>
+                  <div className="flex items-center gap-3">
+                    <div className="text-right">
+                      <p className={`text-3xl leading-none font-black sm:text-4xl ${player.elo < 2000 ? "text-orange-500" : "text-red-500"}`}>
+                        {player.elo}
+                      </p>
+                      <p className="mt-1 text-xs uppercase tracking-wide text-zinc-500">level {faceitLevel}</p>
                     </div>
-                    <LevelIcon level={faceitLevel} />
+                    <LevelIcon level={faceitLevel} className="h-12 w-12 sm:h-14 sm:w-14" />
                   </div>
                 </div>
 
