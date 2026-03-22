@@ -1,46 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-const FACEIT_API_BASE_URL = "https://open.faceit.com/data/v4";
-const FACEIT_API_KEY = import.meta.env.VITE_FACEIT_API_KEY || "fbc26c3e-f22d-4d97-9dfc-6ea4102f51fb";
-const GAME_ID = "cs2";
 const REFRESH_MS = 60_000;
-const PLAYER_NICKNAMES = ["mazedaddy", "SEXN", "unborrasq"];
+const STATS_API_URL = (import.meta.env.VITE_STATS_API_URL ?? "").trim();
 
 type WindowStats = {
   matches: number;
   wins: number;
   losses: number;
-};
-
-type FaceitPlayer = {
-  avatar?: string;
-  nickname: string;
-  player_id: string;
-  faceit_url?: string;
-  games?: {
-    [key: string]: {
-      faceit_elo?: number;
-    };
-  };
-};
-
-type FaceitPlayerStats = {
-  lifetime?: Record<string, unknown>;
-};
-
-type PlayerMatch = {
-  teams?: Record<string, { faction_id?: string; team_id?: string; name?: string; roster?: Array<{ player_id?: string }> }>;
-  results?: {
-    winner?: string;
-  };
-  winner?: string;
-  i10?: string;
-  status?: string;
-  stats?: {
-    i10?: string;
-    [key: string]: unknown;
-  };
-  [key: string]: unknown;
 };
 
 type PlayerViewModel = {
@@ -49,216 +15,25 @@ type PlayerViewModel = {
   avatar: string;
   faceitUrl: string;
   elo: number;
+  kd: number;
+  avg: number;
+  avgMatchesCount: number;
+  maps: Array<{ map: string; matches: number }>;
   day: WindowStats;
   month: WindowStats;
   total: WindowStats;
 };
 
-const FALLBACK_AVATAR = "https://cdn-frontend.faceit-cdn.net/web/300/src/app/assets/images/no-avatar.jpg";
+type ApiStatsResponse = {
+  updatedAtIso: string;
+  players: PlayerViewModel[];
+};
 
-function parseNumericValue(rawValue: unknown): number {
-  const numeric = Number(rawValue);
-  return Number.isFinite(numeric) ? numeric : 0;
-}
-
-function parseWinFlag(rawValue: unknown): boolean | null {
-  if (rawValue === undefined || rawValue === null) {
-    return null;
-  }
-
-  const normalized = String(rawValue).trim().toLowerCase();
-
-  if (normalized === "1" || normalized === "true" || normalized === "win" || normalized === "won") {
-    return true;
-  }
-
-  if (normalized === "0" || normalized === "false" || normalized === "loss" || normalized === "lose" || normalized === "lost") {
-    return false;
-  }
-
-  return null;
-}
-
-function normalizeToken(rawValue: unknown): string {
-  return String(rawValue ?? "")
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]/g, "");
-}
-
-function extractWinFlagFromMatch(match: PlayerMatch): boolean | null {
-  const directFlag = parseWinFlag(match.i10);
-  if (directFlag !== null) {
-    return directFlag;
-  }
-
-  const statsFlag = parseWinFlag(match.stats?.i10);
-  if (statsFlag !== null) {
-    return statsFlag;
-  }
-
-  return null;
-}
-
-function startOfTodayUnix(): number {
-  const date = new Date();
-  date.setHours(0, 0, 0, 0);
-  return Math.floor(date.getTime() / 1000);
-}
-
-function startOfMonthUnix(): number {
-  const date = new Date();
-  date.setDate(1);
-  date.setHours(0, 0, 0, 0);
-  return Math.floor(date.getTime() / 1000);
-}
-
-async function fetchFaceit<T>(path: string): Promise<T> {
-  const response = await fetch(`${FACEIT_API_BASE_URL}${path}`, {
-    headers: {
-      Authorization: `Bearer ${FACEIT_API_KEY}`,
-      Accept: "application/json",
-    },
+function formatStatNumber(value: number, maximumFractionDigits = 2): string {
+  return value.toLocaleString("ru-RU", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits,
   });
-
-  if (!response.ok) {
-    throw new Error(`FACEIT API error: ${response.status}`);
-  }
-
-  return (await response.json()) as T;
-}
-
-function detectWinForPlayer(match: PlayerMatch, playerId: string): boolean {
-  // FACEIT can place per-player win marker in different fields.
-  // Prefer this source because it's less ambiguous than winner/team matching.
-  const winByFlag = extractWinFlagFromMatch(match);
-  if (winByFlag !== null) {
-    return winByFlag;
-  }
-
-  const teams = match.teams ?? {};
-  const winner = match.results?.winner ?? match.winner;
-
-  if (!winner) {
-    return false;
-  }
-
-  const normalizedWinner = normalizeToken(winner);
-
-  for (const [teamKey, teamData] of Object.entries(teams)) {
-    const hasPlayer = teamData.roster?.some((entry) => entry.player_id === playerId);
-
-    if (!hasPlayer) {
-      continue;
-    }
-
-    const teamTokens = new Set([
-      normalizeToken(teamKey),
-      normalizeToken(teamData.faction_id),
-      normalizeToken(teamData.team_id),
-      normalizeToken(teamData.name),
-    ]);
-
-    // Some FACEIT payloads use winner values like f1/f2 or 1/2.
-    if (teamTokens.has("faction1") || teamTokens.has("f1") || teamTokens.has("1")) {
-      teamTokens.add("f1");
-      teamTokens.add("faction1");
-      teamTokens.add("1");
-    }
-
-    if (teamTokens.has("faction2") || teamTokens.has("f2") || teamTokens.has("2")) {
-      teamTokens.add("f2");
-      teamTokens.add("faction2");
-      teamTokens.add("2");
-    }
-
-    return teamTokens.has(normalizedWinner);
-  }
-
-  return false;
-}
-
-function isFinishedMatch(match: PlayerMatch): boolean {
-  const status = normalizeToken(match.status);
-  return !status || status === "finished";
-}
-
-function summarizeMatches(matches: PlayerMatch[], playerId: string): WindowStats {
-  const completedMatches = matches.filter(isFinishedMatch);
-  const wins = completedMatches.reduce((total, match) => total + (detectWinForPlayer(match, playerId) ? 1 : 0), 0);
-  const matchCount = completedMatches.length;
-
-  return {
-    matches: matchCount,
-    wins,
-    losses: Math.max(matchCount - wins, 0),
-  };
-}
-
-function extractTotalStats(lifetime: Record<string, unknown> | undefined): WindowStats {
-  if (!lifetime) {
-    return { matches: 0, wins: 0, losses: 0 };
-  }
-
-  const totalMatches = parseNumericValue(lifetime.Matches ?? lifetime.matches);
-  const totalWins = parseNumericValue(lifetime.Wins ?? lifetime.wins);
-
-  return {
-    matches: totalMatches,
-    wins: totalWins,
-    losses: Math.max(totalMatches - totalWins, 0),
-  };
-}
-
-async function fetchAllMatchesForWindow(playerId: string, fromUnix: number, toUnix: number): Promise<PlayerMatch[]> {
-  const pageLimit = 100;
-  const maxMatches = 300;
-  let offset = 0;
-  const allMatches: PlayerMatch[] = [];
-
-  while (offset < maxMatches) {
-    const query = new URLSearchParams({
-      game: GAME_ID,
-      from: String(fromUnix),
-      to: String(toUnix),
-      offset: String(offset),
-      limit: String(pageLimit),
-    });
-
-    const response = await fetchFaceit<{ items?: PlayerMatch[] }>(`/players/${playerId}/history?${query.toString()}`);
-    const items = response.items ?? [];
-    allMatches.push(...items);
-
-    if (items.length < pageLimit) {
-      break;
-    }
-
-    offset += pageLimit;
-  }
-
-  return allMatches;
-}
-
-async function loadPlayerStats(nickname: string): Promise<PlayerViewModel> {
-  const player = await fetchFaceit<FaceitPlayer>(`/players?nickname=${encodeURIComponent(nickname)}`);
-  const stats = await fetchFaceit<FaceitPlayerStats>(`/players/${player.player_id}/stats/${GAME_ID}`);
-
-  const nowUnix = Math.floor(Date.now() / 1000);
-  const [dayMatches, monthMatches] = await Promise.all([
-    fetchAllMatchesForWindow(player.player_id, startOfTodayUnix(), nowUnix),
-    fetchAllMatchesForWindow(player.player_id, startOfMonthUnix(), nowUnix),
-  ]);
-
-  return {
-    nickname: player.nickname,
-    playerId: player.player_id,
-    avatar: player.avatar || FALLBACK_AVATAR,
-    faceitUrl: player.faceit_url || `https://www.faceit.com/ru/players/${player.nickname}`,
-    elo: parseNumericValue(player.games?.[GAME_ID]?.faceit_elo),
-    day: summarizeMatches(dayMatches, player.player_id),
-    month: summarizeMatches(monthMatches, player.player_id),
-    total: extractTotalStats(stats.lifetime),
-  };
 }
 
 function StatColumn({ label, value }: { label: string; value: WindowStats }) {
@@ -286,7 +61,8 @@ export default function App() {
   const [nowTick, setNowTick] = useState(Date.now());
 
   const loadStats = useCallback(async () => {
-    if (!FACEIT_API_KEY) {
+    if (!STATS_API_URL) {
+      setErrorText("Не указан server-side API URL");
       setIsInitialLoading(false);
       return;
     }
@@ -294,12 +70,24 @@ export default function App() {
     setIsRefreshing(true);
 
     try {
-      const payload = await Promise.all(PLAYER_NICKNAMES.map((nickname) => loadPlayerStats(nickname)));
-      setPlayers(payload);
+      const response = await fetch(`${STATS_API_URL}/api/stats`, {
+        headers: { Accept: "application/json" },
+      });
+
+      if (!response.ok) {
+        throw new Error(`Ошибка API: ${response.status}`);
+      }
+
+      const payload = (await response.json()) as ApiStatsResponse;
+      if (!Array.isArray(payload.players)) {
+        throw new Error("Сервер вернул некорректный формат данных");
+      }
+
+      setPlayers(payload.players);
+      setUpdatedAt(new Date(payload.updatedAtIso));
       setErrorText(null);
-      setUpdatedAt(new Date());
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Не удалось загрузить данные FACEIT";
+      const message = error instanceof Error ? error.message : "Не удалось загрузить данные";
       setErrorText(message);
     } finally {
       setIsInitialLoading(false);
@@ -331,16 +119,16 @@ export default function App() {
     return Math.ceil(remainder / 1000);
   }, [nowTick, updatedAt]);
 
-  if (!FACEIT_API_KEY) {
+  if (!STATS_API_URL) {
     return (
       <main className="relative min-h-screen overflow-hidden bg-zinc-950 px-6 py-12 text-zinc-100">
         <div className="hero-ambient pointer-events-none absolute inset-0" />
         <div className="mx-auto flex max-w-4xl flex-col gap-4">
-          <h1 className="text-4xl font-black tracking-tight sm:text-6xl">FACEIT ELO LIVE</h1>
+          <h1 className="text-4xl font-black tracking-tight sm:text-6xl">RETARD STATS</h1>
           <p className="max-w-2xl text-zinc-300">
-            Добавьте API-ключ FACEIT в переменную <b>VITE_FACEIT_API_KEY</b>, чтобы запустить отслеживание в реальном времени.
+            Добавь URL server-side API в переменную <b>VITE_STATS_API_URL</b>, чтобы запустить отслеживание в реальном времени.
           </p>
-          <p className="text-sm text-zinc-500">Создайте файл .env и укажите: VITE_FACEIT_API_KEY=ваш_ключ</p>
+          <p className="text-sm text-zinc-500">Пример .env: VITE_STATS_API_URL=https://your-worker.your-subdomain.workers.dev</p>
         </div>
       </main>
     );
@@ -352,10 +140,11 @@ export default function App() {
 
       <div className="relative mx-auto flex w-full max-w-6xl flex-col gap-10">
         <header className="space-y-4">
-          <h1 className="text-4xl font-black tracking-tight sm:text-6xl">FACEIT ELO LIVE</h1>
+          <h1 className="text-4xl font-black tracking-tight sm:text-6xl">RETARD STATS</h1>
           <p className="max-w-3xl text-zinc-300 sm:text-lg">
             Статистика по игрокам <b>mazedaddy</b>, <b>SEXN</b> и <b>unborrasq</b> обновляется автоматически каждые 60 секунд.
           </p>
+          <p className="text-sm text-zinc-500">Период "за день" считается по московскому времени (UTC+3).</p>
 
           <div className="flex items-center gap-6 text-sm text-zinc-400">
             <span className="inline-flex items-center gap-2">
@@ -398,7 +187,9 @@ export default function App() {
                       >
                         {player.nickname}
                       </a>
-                      <p className="text-sm text-zinc-400">FACEIT ELO</p>
+                      <div className="mt-1 flex flex-wrap items-center gap-3 text-xs sm:text-sm">
+                        <span className="text-zinc-400">FACEIT ELO</span>
+                      </div>
                     </div>
                   </div>
                   <div className="text-right">
@@ -407,10 +198,35 @@ export default function App() {
                   </div>
                 </div>
 
+                <div className="mb-4 flex flex-wrap items-center gap-5 text-sm text-zinc-300">
+                  <p>
+                    Общий K/D <b className="text-zinc-100">{formatStatNumber(player.kd)}</b>
+                  </p>
+                  <p>
+                    AVG (kills, 30 матчей) <b className="text-zinc-100">{formatStatNumber(player.avg, 0)}</b>
+                    <span className="text-zinc-500"> [{player.avgMatchesCount}]</span>
+                  </p>
+                </div>
+
                 <div className="space-y-2 text-zinc-300">
                   <StatColumn label="За день" value={player.day} />
                   <StatColumn label="За месяц" value={player.month} />
                   <StatColumn label="За всё время" value={player.total} />
+                </div>
+
+                <div className="mt-4 text-sm text-zinc-300">
+                  <p className="mb-2 text-zinc-400">Матчи по картам</p>
+                  {player.maps.length ? (
+                    <div className="flex flex-wrap gap-x-4 gap-y-1">
+                      {player.maps.map((entry) => (
+                        <span key={`${player.playerId}-${entry.map}`}>
+                          {entry.map}: <b className="text-zinc-100">{entry.matches}</b>
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-zinc-500">Нет данных по картам.</p>
+                  )}
                 </div>
               </li>
             ))}

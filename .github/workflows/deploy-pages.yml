@@ -31,6 +31,8 @@ jobs:
         run: npm ci
 
       - name: Build
+        env:
+          VITE_STATS_API_URL: ${{ secrets.VITE_STATS_API_URL }}
         run: npm run build -- --base=/${{ github.event.repository.name }}/
 
       - name: Setup Pages
