@@ -23,7 +23,7 @@ type PlayerViewModel = {
   kd: number;
   avg: number;
   avgMatchesCount: number;
-  maps: Array<{ map: string; matches: number }>;
+  maps: Array<{ map: string; matches: number; winRate: number }>;
   day: WindowStats;
   month: WindowStats;
   total: WindowStats;
@@ -354,8 +354,8 @@ async function summarizeMatches(matches: PlayerMatch[], playerId: string): Promi
   return { matches: completed.length, wins, losses };
 }
 
-function extractMapMatches(stats: FaceitPlayerStats): Array<{ map: string; matches: number }> {
-  const byMap = new Map<string, number>();
+function extractMapMatches(stats: FaceitPlayerStats): Array<{ map: string; matches: number; winRate: number }> {
+  const byMap = new Map<string, { matches: number; weightedWinRate: number }>();
 
   for (const segment of stats.segments ?? []) {
     const label = (segment.label ?? "").trim();
@@ -369,17 +369,38 @@ function extractMapMatches(stats: FaceitPlayerStats): Array<{ map: string; match
       continue;
     }
 
+    const directWinRate = parseDecimal(
+      findValueByKey(segment.stats, ["Win Rate %", "Win Rate", "Winrate", "win_rate", "win_rate_pct", "win_rate_percent"]),
+    );
+    const wins = parseNumber(findValueByKey(segment.stats, ["Wins", "wins"]));
+    const computedWinRate = matches > 0 ? (wins / matches) * 100 : 0;
+    const winRateRaw = directWinRate > 0 ? directWinRate : computedWinRate;
+    const winRate = Math.max(0, Math.min(100, winRateRaw));
+
     if (!/map/i.test(type) && !/^de_/i.test(label)) {
       continue;
     }
 
     const normalizedMap = label.replace(/^de_/i, "");
     const mapName = normalizedMap.charAt(0).toUpperCase() + normalizedMap.slice(1);
-    byMap.set(mapName, (byMap.get(mapName) ?? 0) + matches);
+    const prev = byMap.get(mapName);
+    if (!prev) {
+      byMap.set(mapName, { matches, weightedWinRate: winRate * matches });
+      continue;
+    }
+
+    byMap.set(mapName, {
+      matches: prev.matches + matches,
+      weightedWinRate: prev.weightedWinRate + winRate * matches,
+    });
   }
 
   return [...byMap.entries()]
-    .map(([map, matches]) => ({ map, matches }))
+    .map(([map, value]) => ({
+      map,
+      matches: value.matches,
+      winRate: Number(((value.weightedWinRate || 0) / Math.max(value.matches, 1)).toFixed(1)),
+    }))
     .sort((a, b) => b.matches - a.matches || a.map.localeCompare(b.map));
 }
 

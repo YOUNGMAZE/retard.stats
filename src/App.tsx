@@ -21,7 +21,7 @@ type PlayerViewModel = {
   kd: number;
   avg: number;
   avgMatchesCount: number;
-  maps: Array<{ map: string; matches: number }>;
+  maps: Array<{ map: string; matches: number; winRate: number }>;
   day: WindowStats;
   month: WindowStats;
   total: WindowStats;
@@ -44,6 +44,30 @@ function formatStatNumber(value: number, maximumFractionDigits = 2): string {
     minimumFractionDigits: 0,
     maximumFractionDigits,
   });
+}
+
+function getBestMapName(maps: Array<{ map: string; matches: number; winRate: number }>): string | null {
+  if (!maps.length) {
+    return null;
+  }
+
+  const best = maps.reduce((currentBest, item) => {
+    if (!currentBest) {
+      return item;
+    }
+
+    if (item.winRate > currentBest.winRate) {
+      return item;
+    }
+
+    if (item.winRate === currentBest.winRate && item.matches > currentBest.matches) {
+      return item;
+    }
+
+    return currentBest;
+  }, maps[0]);
+
+  return best.map;
 }
 
 function StatColumn({ label, value }: { label: string; value: WindowStats }) {
@@ -269,7 +293,10 @@ export default function App() {
           </div>
         ) : (
           <ul className="divide-y divide-zinc-800/80 border-y border-zinc-800/80">
-            {players.map((player) => (
+            {players.map((player) => {
+              const bestMapName = getBestMapName(player.maps);
+
+              return (
               <li key={player.playerId} className="fade-in py-6 sm:py-8">
                 <div className="mb-4 flex items-center justify-between gap-3">
                   <div className="flex items-center gap-4">
@@ -317,6 +344,9 @@ export default function App() {
                       {player.maps.map((entry) => (
                         <span key={`${player.playerId}-${entry.map}`}>
                           {entry.map}: <b className="text-zinc-100">{entry.matches}</b>
+                          <span className="text-zinc-500"> | WR </span>
+                          <b className="text-zinc-100">{formatStatNumber(entry.winRate, 1)}%</b>
+                          {bestMapName === entry.map ? <b className="ml-2 text-yellow-300">best map</b> : null}
                         </span>
                       ))}
                     </div>
@@ -325,7 +355,8 @@ export default function App() {
                   )}
                 </div>
               </li>
-            ))}
+              );
+            })}
           </ul>
         )}
       </div>
