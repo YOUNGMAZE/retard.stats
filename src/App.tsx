@@ -396,23 +396,29 @@ export default function App() {
                   <StatColumn label="За всё время" value={player.total} />
                 </div>
 
-                <div className="mt-4 text-sm text-zinc-300">
-                  <p className="mb-2 text-zinc-400">Матчи по картам</p>
-                  {player.maps.length ? (
-                    <div className="flex flex-wrap gap-x-4 gap-y-1">
-                      {player.maps.map((entry) => (
-                        <span key={`${player.playerId}-${entry.map}`}>
-                          {entry.map}: <b className="text-zinc-100">{entry.matches}</b>
-                          <span className="text-zinc-500"> | WR </span>
-                          <b className="text-zinc-100">{formatStatNumber(entry.winRate, 1)}%</b>
-                          {bestMapName === entry.map ? <b className="ml-2 text-yellow-300">best map</b> : null}
-                        </span>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="text-zinc-500">Нет данных по картам.</p>
-                  )}
-                </div>
+                 <div className="mt-4 text-sm text-zinc-300">
+                   <p className="mb-2 text-zinc-400">Матчи по картам</p>
+                   {player.maps.length ? (
+                     <>
+                       <div className="grid grid-cols-1 gap-x-6 gap-y-1 sm:grid-cols-2">
+                         {player.maps.map((entry) => (
+                           <div key={`${player.playerId}-${entry.map}`}>
+                             {entry.map}: <b className="text-zinc-100">{entry.matches}</b>
+                             <span className="text-zinc-500"> | WR </span>
+                             <b className="text-zinc-100">{formatStatNumber(entry.winRate, 1)}%</b>
+                           </div>
+                         ))}
+                       </div>
+                       {bestMapName ? (
+                         <p className="mt-2 text-yellow-300">
+                           best map: <b>{bestMapName}</b>
+                         </p>
+                       ) : null}
+                     </>
+                   ) : (
+                     <p className="text-zinc-500">Нет данных по картам.</p>
+                   )}
+                 </div>
               </li>
               );
             })}
