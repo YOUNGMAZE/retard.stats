@@ -45,6 +45,55 @@ const KNOWN_WEAPON_LABELS = new Set([
   "knife",
 ]);
 
+const WEAPON_ALIASES: Record<string, string> = {
+  deserteagle: "deagle",
+  usps: "usp",
+  usp: "usp",
+  m4a1: "m4a1s",
+  m4a1s: "m4a1s",
+  mp5sd: "mp7",
+  he: "hegrenade",
+  incendiary: "incgrenade",
+  incendiarygrenade: "incgrenade",
+  smoke: "smokegrenade",
+  flash: "flashbang",
+};
+
+const WEAPON_DISPLAY_NAMES: Record<string, string> = {
+  ak47: "AK-47",
+  m4a1s: "M4A1-S",
+  m4a4: "M4A4",
+  awp: "AWP",
+  deagle: "Desert Eagle",
+  usp: "USP-S",
+  glock: "Glock-18",
+  famas: "FAMAS",
+  galil: "Galil AR",
+  mp9: "MP9",
+  mac10: "MAC-10",
+  mp7: "MP7",
+  ump45: "UMP-45",
+  p90: "P90",
+  bizon: "PP-Bizon",
+  xm1014: "XM1014",
+  mag7: "MAG-7",
+  nova: "Nova",
+  ssg08: "SSG 08",
+  scar20: "SCAR-20",
+  g3sg1: "G3SG1",
+  tec9: "Tec-9",
+  five7: "Five-SeveN",
+  p250: "P250",
+  cz75: "CZ75-Auto",
+  zeus: "Zeus x27",
+  hegrenade: "HE Grenade",
+  molotov: "Molotov",
+  incgrenade: "Incendiary",
+  smokegrenade: "Smoke",
+  flashbang: "Flashbang",
+  knife: "Knife",
+};
+
 type WindowStats = {
   matches: number;
   wins: number;
@@ -268,6 +317,37 @@ function normalizeWeaponName(value: unknown): string {
     .split(/\s+/)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
     .join(" ");
+}
+
+function resolveWeaponToken(value: unknown): string {
+  const rawToken = normalizeToken(value);
+  if (!rawToken) {
+    return "";
+  }
+
+  const directAlias = WEAPON_ALIASES[rawToken];
+  if (directAlias) {
+    return directAlias;
+  }
+
+  if (KNOWN_WEAPON_LABELS.has(rawToken)) {
+    return rawToken;
+  }
+
+  const trimmedWeaponPrefix = rawToken.replace(/^weapon/, "");
+  const aliasFromTrimmed = WEAPON_ALIASES[trimmedWeaponPrefix];
+  if (aliasFromTrimmed) {
+    return aliasFromTrimmed;
+  }
+  if (KNOWN_WEAPON_LABELS.has(trimmedWeaponPrefix)) {
+    return trimmedWeaponPrefix;
+  }
+
+  return "";
+}
+
+function weaponLabelFromToken(token: string): string {
+  return WEAPON_DISPLAY_NAMES[token] ?? normalizeWeaponName(token);
 }
 
 function parseDecimal(value: unknown): number {
@@ -1145,6 +1225,130 @@ function isWeaponSegment(segment: { label?: string; type?: string; mode?: string
   return /^(ak|m4|awp|usp|glock|deagle|famas|galil|mp|p90|ssg|scar|g3|tec|five|p250|cz|knife|smoke|flash|molotov|nova|xm)/i.test(label);
 }
 
+function mergeWeaponAggregate(
+  byWeapon: Map<
+    string,
+    {
+      matches: number;
+      kills: number;
+      weightedHitRate: number;
+      hitWeight: number;
+      weightedAvgKills: number;
+      avgWeight: number;
+    }
+  >,
+  weaponLabel: string,
+  matches: number,
+  kills: number,
+  hitRate: number,
+  avgKills: number,
+): void {
+  const safeMatches = Math.max(matches, 0);
+  const safeKills = Math.max(kills, 0);
+  const safeHitRate = Math.max(hitRate, 0);
+  const safeAvgKills = Math.max(avgKills, 0);
+  const hitWeight = Math.max(safeKills, safeMatches, 1);
+  const avgWeight = Math.max(safeMatches, 1);
+  const prev = byWeapon.get(weaponLabel);
+
+  if (!prev) {
+    byWeapon.set(weaponLabel, {
+      matches: safeMatches,
+      kills: safeKills,
+      weightedHitRate: safeHitRate * hitWeight,
+      hitWeight,
+      weightedAvgKills: safeAvgKills * avgWeight,
+      avgWeight,
+    });
+    return;
+  }
+
+  byWeapon.set(weaponLabel, {
+    matches: prev.matches + safeMatches,
+    kills: prev.kills + safeKills,
+    weightedHitRate: prev.weightedHitRate + safeHitRate * hitWeight,
+    hitWeight: prev.hitWeight + hitWeight,
+    weightedAvgKills: prev.weightedAvgKills + safeAvgKills * avgWeight,
+    avgWeight: prev.avgWeight + avgWeight,
+  });
+}
+
+function collectWeaponStatsFromLifetime(
+  lifetime: Record<string, unknown> | undefined,
+  byWeapon: Map<
+    string,
+    {
+      matches: number;
+      kills: number;
+      weightedHitRate: number;
+      hitWeight: number;
+      weightedAvgKills: number;
+      avgWeight: number;
+    }
+  >,
+): void {
+  if (!lifetime) {
+    return;
+  }
+
+  const temporary = new Map<string, { matches: number; kills: number; hitRate: number; avgKills: number }>();
+
+  const upsert = (token: string, patch: Partial<{ matches: number; kills: number; hitRate: number; avgKills: number }>) => {
+    const prev = temporary.get(token) ?? { matches: 0, kills: 0, hitRate: 0, avgKills: 0 };
+    temporary.set(token, {
+      matches: patch.matches ?? prev.matches,
+      kills: patch.kills ?? prev.kills,
+      hitRate: patch.hitRate ?? prev.hitRate,
+      avgKills: patch.avgKills ?? prev.avgKills,
+    });
+  };
+
+  for (const [key, value] of Object.entries(lifetime)) {
+    const normalizedKey = normalizeToken(key);
+    if (!normalizedKey) {
+      continue;
+    }
+
+    const keyMatchers: Array<{ suffixes: string[]; field: "kills" | "matches" | "hitRate" | "avgKills"; parser: (input: unknown) => number }> = [
+      { suffixes: ["kills"], field: "kills", parser: parseDecimal },
+      { suffixes: ["matches", "games"], field: "matches", parser: parseNumber },
+      { suffixes: ["accuracy", "accuracypercent", "hitrate", "hitratepercent", "headshots", "headshotspercent", "hs", "hspercent"], field: "hitRate", parser: parsePercent },
+      { suffixes: ["averagekills", "avgkills", "killspermatch"], field: "avgKills", parser: parseDecimal },
+    ];
+
+    for (const matcher of keyMatchers) {
+      for (const suffix of matcher.suffixes) {
+        if (!normalizedKey.endsWith(suffix)) {
+          continue;
+        }
+
+        const prefix = normalizedKey.slice(0, -suffix.length);
+        const weaponToken = resolveWeaponToken(prefix);
+        if (!weaponToken) {
+          continue;
+        }
+
+        const parsed = matcher.parser(value);
+        if (parsed <= 0) {
+          continue;
+        }
+
+        upsert(weaponToken, { [matcher.field]: parsed } as Partial<{ matches: number; kills: number; hitRate: number; avgKills: number }>);
+      }
+    }
+  }
+
+  for (const [token, row] of temporary.entries()) {
+    if (row.avgKills <= 0 && row.kills > 0 && row.matches > 0) {
+      row.avgKills = row.kills / row.matches;
+    }
+    if (row.kills <= 0 && row.hitRate <= 0 && row.avgKills <= 0) {
+      continue;
+    }
+    mergeWeaponAggregate(byWeapon, weaponLabelFromToken(token), row.matches, row.kills, row.hitRate, row.avgKills);
+  }
+}
+
 function extractWeaponStats(stats: FaceitPlayerStats): { weapons: WeaponStats[]; favoriteWeapon: WeaponStats | null } {
   const byWeapon = new Map<
     string,
@@ -1190,32 +1394,14 @@ function extractWeaponStats(stats: FaceitPlayerStats): { weapons: WeaponStats[];
       continue;
     }
 
-    const weapon = normalizeWeaponName(segment.label);
-    const hitWeight = Math.max(kills, matches, 1);
-    const avgWeight = Math.max(matches, 1);
-    const prev = byWeapon.get(weapon);
-
-    if (!prev) {
-      byWeapon.set(weapon, {
-        matches,
-        kills,
-        weightedHitRate: hitRate * hitWeight,
-        hitWeight,
-        weightedAvgKills: avgKills * avgWeight,
-        avgWeight,
-      });
-      continue;
-    }
-
-    byWeapon.set(weapon, {
-      matches: prev.matches + matches,
-      kills: prev.kills + kills,
-      weightedHitRate: prev.weightedHitRate + hitRate * hitWeight,
-      hitWeight: prev.hitWeight + hitWeight,
-      weightedAvgKills: prev.weightedAvgKills + avgKills * avgWeight,
-      avgWeight: prev.avgWeight + avgWeight,
-    });
+    const segmentToken = resolveWeaponToken(segment.label);
+    const weapon = segmentToken ? weaponLabelFromToken(segmentToken) : normalizeWeaponName(segment.label);
+    mergeWeaponAggregate(byWeapon, weapon, matches, kills, hitRate, avgKills);
   }
+
+  // FACEIT can return weapon stats in lifetime keys instead of dedicated segments.
+  // Merge those keys to avoid empty weapon panels for players with valid stats.
+  collectWeaponStatsFromLifetime(stats.lifetime, byWeapon);
 
   const weapons = [...byWeapon.entries()]
     .map(([weapon, value]) => ({
