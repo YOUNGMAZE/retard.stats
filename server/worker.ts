@@ -7,6 +7,7 @@ const PLAYER_CACHE_TTL_MS = 120_000;
 const DEFAULT_PLAYER_NICKNAMES = ["mazedaddy", "SEXN", "unborrasq"];
 const MOSCOW_UTC_OFFSET_HOURS = 3;
 const FALLBACK_AVATAR = "https://cdn-frontend.faceit-cdn.net/web/300/src/app/assets/images/no-avatar.jpg";
+const ADMIN_USERNAME_NORMALIZED = "maze";
 
 type WindowStats = {
   matches: number;
@@ -385,6 +386,13 @@ async function requireAuth(request: Request, env: Env): Promise<AuthSessionRecor
   }
 
   return session;
+}
+
+function isAdminSession(session: AuthSessionRecord | null): boolean {
+  if (!session) {
+    return false;
+  }
+  return normalizeUsername(session.username) === ADMIN_USERNAME_NORMALIZED;
 }
 
 async function registerUser(request: Request, env: Env): Promise<Response> {
@@ -1260,6 +1268,9 @@ export default {
         const session = await requireAuth(request, env);
         if (!session) {
           return json({ error: "Unauthorized" }, { status: 401, headers });
+        }
+        if (!isAdminSession(session)) {
+          return json({ error: "Forbidden" }, { status: 403, headers });
         }
 
         const users = await listAuthUsers(env);

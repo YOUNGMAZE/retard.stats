@@ -5,6 +5,7 @@ const LOCAL_CACHE_KEY = "retard-stats-cache-v2";
 const LOCAL_LAYOUT_KEY = "retard-stats-layout-v1";
 const LOCAL_PLAYERS_KEY = "retard-stats-players-v1";
 const LOCAL_AUTH_TOKEN_KEY = "retard-stats-auth-token-v1";
+const ADMIN_USERNAME_NORMALIZED = "maze";
 const DEFAULT_STATS_API_URL = "https://retard-stats-api.wladjika25.workers.dev";
 const STATS_API_URL = (import.meta.env.VITE_STATS_API_URL || DEFAULT_STATS_API_URL).trim().replace(/\/+$/, "");
 const DEFAULT_PLAYERS = ["mazedaddy", "SEXN", "unborrasq"];
@@ -361,7 +362,9 @@ export default function App() {
   const [registeredUsers, setRegisteredUsers] = useState<RegisteredUser[]>([]);
   const [isUsersLoading, setIsUsersLoading] = useState(false);
   const [usersError, setUsersError] = useState<string | null>(null);
+  const [isUsersPanelOpen, setIsUsersPanelOpen] = useState(true);
   const playersRef = useRef<PlayerViewModel[]>([]);
+  const isAdminUser = useMemo(() => String(authUsername ?? "").trim().toLowerCase() === ADMIN_USERNAME_NORMALIZED, [authUsername]);
 
   useEffect(() => {
     playersRef.current = players;
@@ -509,7 +512,7 @@ export default function App() {
   }, [authToken]);
 
   const loadRegisteredUsers = useCallback(async () => {
-    if (!authToken) {
+    if (!authToken || !isAdminUser) {
       setRegisteredUsers([]);
       setUsersError(null);
       return;
@@ -546,17 +549,17 @@ export default function App() {
     } finally {
       setIsUsersLoading(false);
     }
-  }, [authToken]);
+  }, [authToken, isAdminUser]);
 
   useEffect(() => {
-    if (!authUsername) {
+    if (!authUsername || !isAdminUser) {
       setRegisteredUsers([]);
       setUsersError(null);
       return;
     }
 
     void loadRegisteredUsers();
-  }, [authUsername, loadRegisteredUsers]);
+  }, [authUsername, isAdminUser, loadRegisteredUsers]);
 
   useEffect(() => {
     try {
@@ -898,9 +901,11 @@ export default function App() {
             <button type="button" onClick={() => void logout()} className="border-b border-zinc-500 text-zinc-100 transition hover:border-zinc-100">
               Выйти
             </button>
-            <button type="button" onClick={() => void loadRegisteredUsers()} className="border-b border-zinc-500 text-zinc-100 transition hover:border-zinc-100">
-              Обновить пользователей
-            </button>
+            {isAdminUser ? (
+              <button type="button" onClick={() => void loadRegisteredUsers()} className="border-b border-zinc-500 text-zinc-100 transition hover:border-zinc-100">
+                Обновить пользователей
+              </button>
+            ) : null}
             <span className="inline-flex items-center gap-2">
               <span className={`h-2.5 w-2.5 rounded-full ${isRefreshing ? "bg-emerald-400 pulse-dot" : "bg-zinc-500"}`} />
               {isRefreshing ? "Обновление..." : "Данные актуальны"}
@@ -913,24 +918,40 @@ export default function App() {
 
           {updatedAt ? <p className="text-xs text-zinc-500">Последнее обновление: {updatedAt.toLocaleString("ru-RU")}</p> : null}
 
-          <div className="rounded-md border border-zinc-800/80 bg-zinc-900/40 p-3 text-sm">
-            <p>
-              Пользователей зарегистрировано: <b className="text-zinc-100">{registeredUsers.length}</b>
-            </p>
-            {isUsersLoading ? <p className="mt-1 text-zinc-500">Загрузка списка пользователей...</p> : null}
-            {usersError ? <p className="mt-1 text-rose-300">{usersError}</p> : null}
-            {registeredUsers.length ? (
-              <div className="mt-2 grid gap-1 text-zinc-300 sm:grid-cols-2">
-                {registeredUsers.map((entry) => (
-                  <p key={`${entry.username}:${entry.createdAtIso}`}>
-                    <b className="text-zinc-100">{entry.username}</b>
-                    <span className="text-zinc-500"> - </span>
-                    {new Date(entry.createdAtIso).toLocaleString("ru-RU")}
-                  </p>
-                ))}
+          {isAdminUser ? (
+            <div className="rounded-md border border-zinc-800/80 bg-zinc-900/40 p-3 text-sm">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p>
+                  Пользователей зарегистрировано: <b className="text-zinc-100">{registeredUsers.length}</b>
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setIsUsersPanelOpen((prev) => !prev)}
+                  className="border-b border-zinc-500 text-zinc-200 transition hover:border-zinc-200"
+                >
+                  {isUsersPanelOpen ? "Свернуть" : "Развернуть"}
+                </button>
               </div>
-            ) : null}
-          </div>
+
+              {isUsersPanelOpen ? (
+                <>
+                  {isUsersLoading ? <p className="mt-1 text-zinc-500">Загрузка списка пользователей...</p> : null}
+                  {usersError ? <p className="mt-1 text-rose-300">{usersError}</p> : null}
+                  {registeredUsers.length ? (
+                    <div className="mt-2 grid gap-1 text-zinc-300 sm:grid-cols-2">
+                      {registeredUsers.map((entry) => (
+                        <p key={`${entry.username}:${entry.createdAtIso}`}>
+                          <b className="text-zinc-100">{entry.username}</b>
+                          <span className="text-zinc-500"> - </span>
+                          {new Date(entry.createdAtIso).toLocaleString("ru-RU")}
+                        </p>
+                      ))}
+                    </div>
+                  ) : null}
+                </>
+              ) : null}
+            </div>
+          ) : null}
         </header>
 
         <section className="grid gap-4 sm:grid-cols-[1fr_auto] sm:items-end">
