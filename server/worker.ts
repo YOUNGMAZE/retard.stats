@@ -1,17 +1,43 @@
 const FACEIT_API_BASE_URL = "https://open.faceit.com/data/v4";
 const GAME_ID = "cs2";
 const AVG_SAMPLE_SIZE = 30;
-const PLAYER_NICKNAMES = ["mazedaddy", "SEXN", "unborrasq"];
+const HISTORY_LIMIT = 100;
+const CACHE_TTL_MS = 300_000;
+const PLAYER_CACHE_TTL_MS = 120_000;
+const DEFAULT_PLAYER_NICKNAMES = ["mazedaddy", "SEXN", "unborrasq"];
 const MOSCOW_UTC_OFFSET_HOURS = 3;
 const FALLBACK_AVATAR = "https://cdn-frontend.faceit-cdn.net/web/300/src/app/assets/images/no-avatar.jpg";
-const CACHE_TTL_MS = 300_000;
-const HISTORY_LIMIT = 100;
-const PLAYER_CACHE_TTL_MS = 120_000;
 
 type WindowStats = {
   matches: number;
   wins: number;
   losses: number;
+};
+
+type MapStats = {
+  map: string;
+  matches: number;
+  winRate: number;
+  wins: number;
+  losses: number;
+  kd: number;
+  avgKills: number;
+};
+
+type ActivityInfo = {
+  inMatch: boolean;
+  matchId?: string;
+  matchUrl?: string;
+};
+
+type LastMatchInfo = {
+  matchId: string;
+  matchUrl: string;
+  playedAtIso: string;
+  map: string;
+  win: boolean | null;
+  kills: number | null;
+  deaths: number | null;
 };
 
 type PlayerViewModel = {
@@ -24,10 +50,12 @@ type PlayerViewModel = {
   kd: number;
   avg: number;
   avgMatchesCount: number;
-  maps: Array<{ map: string; matches: number; winRate: number }>;
+  maps: MapStats[];
   day: WindowStats;
   month: WindowStats;
   total: WindowStats;
+  activity: ActivityInfo;
+  lastMatch: LastMatchInfo | null;
 };
 
 type ApiStatsResponse = {
@@ -40,6 +68,10 @@ type PlayerApiResponse = {
   updatedAtIso: string;
   player: PlayerViewModel | null;
   error?: string;
+};
+
+type SearchApiResponse = {
+  items: Array<{ nickname: string; avatar: string; elo: number }>;
 };
 
 type FaceitPlayer = {
@@ -75,16 +107,15 @@ type PlayerMatch = {
   finished_at?: number;
   started_at?: number;
   status?: string;
-  teams?: Record<string, { faction_id?: string; team_id?: string; name?: string; roster?: Array<{ player_id?: string }> }>;
+  teams?: Record<string, { faction_id?: string; team_id?: string; name?: string; roster?: Array<{ player_id?: string }>; players?: Array<Record<string, unknown>> }>;
   results?: {
     winner?: string;
   };
   winner?: string;
+  faction?: string;
+  team?: string;
   i10?: string;
-  stats?: {
-    i10?: string;
-    [key: string]: unknown;
-  };
+  stats?: Record<string, unknown>;
   [key: string]: unknown;
 };
 
@@ -96,6 +127,18 @@ type FaceitMatchStats = {
         player_stats?: Record<string, unknown>;
       }>;
     }>;
+  }>;
+};
+
+type FaceitSearchResponse = {
+  items?: Array<{
+    nickname?: string;
+    avatar?: string;
+    games?: {
+      [key: string]: {
+        faceit_elo?: number;
+      };
+    };
   }>;
 };
 
@@ -125,6 +168,15 @@ function normalizeToken(value: unknown): string {
     .replace(/[^a-z0-9]/g, "");
 }
 
+function normalizeMapName(value: unknown): string {
+  const raw = String(value ?? "").trim();
+  if (!raw) {
+    return "Unknown";
+  }
+  const withoutPrefix = raw.replace(/^de_/i, "").replace(/^cs_/i, "");
+  return withoutPrefix.charAt(0).toUpperCase() + withoutPrefix.slice(1);
+}
+
 function parseDecimal(value: unknown): number {
   const str = String(value ?? "").trim();
   const match = str.match(/-?\d+(?:[.,]\d+)?/);
@@ -133,6 +185,11 @@ function parseDecimal(value: unknown): number {
   }
 
   const parsed = Number(match[0].replace(",", "."));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function parseNumber(value: unknown): number {
+  const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
@@ -147,17 +204,11 @@ function parsePercent(value: unknown): number {
     return 0;
   }
 
-  // FACEIT may return win rate as 0.56 (ratio) or 56 / "56%" (percent).
   if (!raw.includes("%") && parsed > 0 && parsed <= 1) {
     return parsed * 100;
   }
 
   return parsed;
-}
-
-function parseNumber(value: unknown): number {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function parseWinFlag(value: unknown): boolean | null {
@@ -169,44 +220,6 @@ function parseWinFlag(value: unknown): boolean | null {
     return false;
   }
   return null;
-}
-
-function detectPremium(player: FaceitPlayer): boolean {
-  if (typeof player.premium === "boolean") {
-    return player.premium;
-  }
-
-  if (typeof player.has_premium === "boolean") {
-    return player.has_premium;
-  }
-
-  const directTokens = [player.membership_type, player.subscription_type].map((entry) => normalizeToken(entry));
-  if (directTokens.some((token) => token.includes("premium"))) {
-    return true;
-  }
-
-  const collections = [player.memberships, player.subscriptions];
-  for (const value of collections) {
-    if (Array.isArray(value)) {
-      for (const item of value) {
-        const token = normalizeToken(item);
-        if (token.includes("premium")) {
-          return true;
-        }
-      }
-    }
-
-    if (value && typeof value === "object") {
-      for (const nested of Object.values(value as Record<string, unknown>)) {
-        const token = normalizeToken(nested);
-        if (token.includes("premium")) {
-          return true;
-        }
-      }
-    }
-  }
-
-  return false;
 }
 
 function pickExistingValue(record: Record<string, unknown> | undefined, keys: string[]): unknown {
@@ -231,24 +244,7 @@ function pickExistingValue(record: Record<string, unknown> | undefined, keys: st
 }
 
 function findValueByKey(record: Record<string, unknown> | undefined, keys: string[]): unknown {
-  if (!record) {
-    return undefined;
-  }
-
-  for (const key of keys) {
-    if (key in record) {
-      return record[key];
-    }
-  }
-
-  const normalized = new Set(keys.map((key) => normalizeToken(key)));
-  for (const [key, value] of Object.entries(record)) {
-    if (normalized.has(normalizeToken(key))) {
-      return value;
-    }
-  }
-
-  return undefined;
+  return pickExistingValue(record, keys);
 }
 
 function normalizeFactionToken(value: unknown): string {
@@ -298,7 +294,6 @@ function isMatchFromTodayMoscow(match: PlayerMatch): boolean {
   if (!timestamp) {
     return false;
   }
-
   return timestamp >= startOfTodayUnixMoscow() && timestamp < startOfTomorrowUnixMoscow();
 }
 
@@ -308,6 +303,41 @@ function isFinishedMatch(match: PlayerMatch): boolean {
     return status === "finished";
   }
   return Boolean(match.finished_at);
+}
+
+function detectPremium(player: FaceitPlayer): boolean {
+  if (typeof player.premium === "boolean") {
+    return player.premium;
+  }
+  if (typeof player.has_premium === "boolean") {
+    return player.has_premium;
+  }
+
+  const directTokens = [player.membership_type, player.subscription_type].map((entry) => normalizeToken(entry));
+  if (directTokens.some((token) => token.includes("premium"))) {
+    return true;
+  }
+
+  const collections = [player.memberships, player.subscriptions];
+  for (const value of collections) {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        if (normalizeToken(item).includes("premium")) {
+          return true;
+        }
+      }
+    }
+
+    if (value && typeof value === "object") {
+      for (const item of Object.values(value as Record<string, unknown>)) {
+        if (normalizeToken(item).includes("premium")) {
+          return true;
+        }
+      }
+    }
+  }
+
+  return false;
 }
 
 async function faceitFetch<T>(path: string, env: Env, retries = 2): Promise<T> {
@@ -339,16 +369,7 @@ async function faceitFetch<T>(path: string, env: Env, retries = 2): Promise<T> {
 function detectWinForPlayer(match: PlayerMatch, playerId: string): boolean | null {
   const direct = parseWinFlag(
     match.i10 ??
-      pickExistingValue(match.stats as Record<string, unknown> | undefined, [
-        "i10",
-        "result",
-        "Result",
-        "win",
-        "Win",
-        "won",
-        "Won",
-        "is_winner",
-      ]),
+      pickExistingValue(match.stats, ["i10", "result", "Result", "win", "Win", "won", "Won", "is_winner"]),
   );
   if (direct !== null) {
     return direct;
@@ -357,33 +378,26 @@ function detectWinForPlayer(match: PlayerMatch, playerId: string): boolean | nul
   const winner = normalizeFactionToken(
     match.results?.winner ??
       match.winner ??
-      pickExistingValue(match.stats as Record<string, unknown> | undefined, ["winner", "Winner", "winning_team", "winning faction"]),
+      pickExistingValue(match.stats, ["winner", "Winner", "winning_team", "winning faction"]),
   );
   if (!winner || !match.teams) {
     return null;
   }
 
-  const normalizedWinner = winner;
-
-  // Some history payloads expose player's faction directly without full roster.
   const directFaction = normalizeFactionToken(
-    match.faction ??
-      match.team ??
-      pickExistingValue(match.stats as Record<string, unknown> | undefined, ["faction", "team", "player_faction", "i1"]),
+    match.faction ?? match.team ?? pickExistingValue(match.stats, ["faction", "team", "player_faction", "i1"]),
   );
   if (directFaction) {
-    return directFaction === normalizedWinner;
+    return directFaction === winner;
   }
 
   for (const [teamKey, team] of Object.entries(match.teams)) {
-    const rosterEntries = Array.isArray(team.roster) ? team.roster : [];
-    const dynamicPlayers = Array.isArray((team as { players?: unknown[] }).players) ? ((team as { players?: Array<Record<string, unknown>> }).players ?? []) : [];
+    const roster = Array.isArray(team.roster) ? team.roster : [];
+    const dynamicPlayers = Array.isArray(team.players) ? team.players : [];
     const containsPlayer =
-      rosterEntries.some((entry) => entry.player_id === playerId) ||
-      dynamicPlayers.some((entry) => {
-        const pid = String(entry.player_id ?? entry.playerId ?? "");
-        return pid === playerId;
-      });
+      roster.some((entry) => entry.player_id === playerId) ||
+      dynamicPlayers.some((entry) => String(entry.player_id ?? entry.playerId ?? "") === playerId);
+
     if (!containsPlayer) {
       continue;
     }
@@ -395,7 +409,7 @@ function detectWinForPlayer(match: PlayerMatch, playerId: string): boolean | nul
       normalizeToken(team.name),
     ]);
 
-    return tokens.has(normalizedWinner);
+    return tokens.has(winner);
   }
 
   return null;
@@ -418,54 +432,30 @@ async function summarizeMatches(matches: PlayerMatch[], playerId: string): Promi
   return { matches: completed.length, wins, losses };
 }
 
-function extractMapMatches(stats: FaceitPlayerStats): Array<{ map: string; matches: number; winRate: number }> {
-  const byMap = new Map<string, { matches: number; weightedWinRate: number }>();
-
-  for (const segment of stats.segments ?? []) {
-    const label = (segment.label ?? "").trim();
-    const type = (segment.type ?? "").trim();
-    if (!label || /^overall$/i.test(label)) {
-      continue;
-    }
-
-    const matches = parseNumber(segment.stats?.Matches ?? segment.stats?.matches);
-    if (matches <= 0) {
-      continue;
-    }
-
-    const directWinRate = parsePercent(
-      findValueByKey(segment.stats, ["Win Rate %", "Win Rate", "Winrate", "win_rate", "win_rate_pct", "win_rate_percent"]),
-    );
-    const wins = parseNumber(findValueByKey(segment.stats, ["Wins", "wins"]));
-    const computedWinRate = matches > 0 ? (wins / matches) * 100 : 0;
-    const winRateRaw = directWinRate > 0 ? directWinRate : computedWinRate;
-    const winRate = Math.max(0, Math.min(100, winRateRaw));
-
-    if (!/map/i.test(type) && !/^de_/i.test(label)) {
-      continue;
-    }
-
-    const normalizedMap = label.replace(/^de_/i, "");
-    const mapName = normalizedMap.charAt(0).toUpperCase() + normalizedMap.slice(1);
-    const prev = byMap.get(mapName);
-    if (!prev) {
-      byMap.set(mapName, { matches, weightedWinRate: winRate * matches });
-      continue;
-    }
-
-    byMap.set(mapName, {
-      matches: prev.matches + matches,
-      weightedWinRate: prev.weightedWinRate + winRate * matches,
-    });
+function resolveKillsFromHistory(match: PlayerMatch): number | null {
+  const raw = pickExistingValue(match.stats, ["Kills", "kills", "K", "k", "Total Kills", "total_kills", "i6"]);
+  if (raw === undefined || raw === null || raw === "") {
+    return null;
   }
+  const kills = parseDecimal(raw);
+  return Number.isFinite(kills) ? kills : null;
+}
 
-  return [...byMap.entries()]
-    .map(([map, value]) => ({
-      map,
-      matches: value.matches,
-      winRate: Number(((value.weightedWinRate || 0) / Math.max(value.matches, 1)).toFixed(1)),
-    }))
-    .sort((a, b) => b.matches - a.matches || a.map.localeCompare(b.map));
+function resolveDeathsFromHistory(match: PlayerMatch): number | null {
+  const raw = pickExistingValue(match.stats, ["Deaths", "deaths", "D", "d", "Total Deaths", "total_deaths", "i8"]);
+  if (raw === undefined || raw === null || raw === "") {
+    return null;
+  }
+  const deaths = parseDecimal(raw);
+  return Number.isFinite(deaths) ? deaths : null;
+}
+
+function resolveMapFromHistory(match: PlayerMatch): string {
+  const mapRaw =
+    pickExistingValue(match.stats, ["Map", "map", "Map Name", "map_name", "i1", "Map pick"]) ??
+    match.competition_name ??
+    match.competition;
+  return normalizeMapName(mapRaw);
 }
 
 async function fetchRecentHistory(playerId: string, env: Env): Promise<PlayerMatch[]> {
@@ -513,21 +503,6 @@ function extractKillsFromMatchStats(matchStats: FaceitMatchStats | null, playerI
   return null;
 }
 
-function resolveKillsFromHistory(match: PlayerMatch): number | null {
-  const source = match.stats as Record<string, unknown> | undefined;
-  if (!source) {
-    return null;
-  }
-
-  const rawKills = pickExistingValue(source, ["Kills", "kills", "K", "k", "Total Kills", "total_kills", "i6"]);
-  if (rawKills === undefined || rawKills === null || rawKills === "") {
-    return null;
-  }
-
-  const kills = parseDecimal(rawKills);
-  return Number.isFinite(kills) ? kills : null;
-}
-
 async function calculateLastMatchesAvgKills(
   playerId: string,
   history: PlayerMatch[],
@@ -564,24 +539,23 @@ async function calculateLastMatchesAvgKills(
   }
 
   if (kills.length) {
-    const sum = kills.reduce((acc, item) => acc + item, 0);
+    const sum = kills.reduce((acc, value) => acc + value, 0);
     return { avg: Math.round(sum / kills.length), resolvedMatches: kills.length };
   }
 
-  // Fallback to profile metric only when match-level kills are missing.
-  const lifetimeAvg = parseDecimal(
+  const fallbackAvg = parseDecimal(
     findValueByKey(lifetime, ["Average Kills", "Average Kills per Match", "Avg Kills", "average_kills", "avg_kills"]),
   );
-  if (lifetimeAvg > 0) {
-    return { avg: Math.round(lifetimeAvg), resolvedMatches: 0 };
+  if (fallbackAvg > 0) {
+    return { avg: Math.round(fallbackAvg), resolvedMatches: 0 };
   }
 
   return { avg: 0, resolvedMatches: 0 };
 }
 
 function extractTotalStats(lifetime: Record<string, unknown> | undefined): WindowStats {
-  const matches = parseNumber(lifetime?.Matches ?? lifetime?.matches);
-  const wins = parseNumber(lifetime?.Wins ?? lifetime?.wins);
+  const matches = parseNumber(findValueByKey(lifetime, ["Matches", "matches", "Total Matches", "total_matches"]));
+  const wins = parseNumber(findValueByKey(lifetime, ["Wins", "wins", "Total Wins", "total_wins"]));
   return {
     matches,
     wins,
@@ -589,21 +563,142 @@ function extractTotalStats(lifetime: Record<string, unknown> | undefined): Windo
   };
 }
 
+function extractMapStats(stats: FaceitPlayerStats): MapStats[] {
+  const byMap = new Map<string, { matches: number; wins: number; losses: number; weightedWinRate: number; weightedKd: number; weightedAvgKills: number }>();
+
+  for (const segment of stats.segments ?? []) {
+    const label = (segment.label ?? "").trim();
+    if (!label || /^overall$/i.test(label)) {
+      continue;
+    }
+
+    const type = (segment.type ?? "").trim();
+    const isMapSegment = /map/i.test(type) || /^de_/i.test(label) || /^cs_/i.test(label);
+    if (!isMapSegment) {
+      continue;
+    }
+
+    const segmentStats = segment.stats;
+    const matches = parseNumber(findValueByKey(segmentStats, ["Matches", "matches"]));
+    if (matches <= 0) {
+      continue;
+    }
+
+    const wins = parseNumber(findValueByKey(segmentStats, ["Wins", "wins"]));
+    const directWinRate = parsePercent(
+      findValueByKey(segmentStats, ["Win Rate %", "Win Rate", "Winrate", "win_rate", "win_rate_pct", "win_rate_percent"]),
+    );
+    const computedWinRate = matches > 0 ? (wins / matches) * 100 : 0;
+    const winRate = Math.max(0, Math.min(100, directWinRate > 0 ? directWinRate : computedWinRate));
+    const losses = Math.max(matches - wins, 0);
+
+    const kd = parseDecimal(findValueByKey(segmentStats, ["Average K/D Ratio", "Average KD Ratio", "K/D Ratio", "K/D", "kd"]));
+    const avgKills = parseDecimal(findValueByKey(segmentStats, ["Average Kills", "Avg Kills", "average_kills", "avg_kills"]));
+
+    const map = normalizeMapName(label);
+    const prev = byMap.get(map);
+    if (!prev) {
+      byMap.set(map, {
+        matches,
+        wins,
+        losses,
+        weightedWinRate: winRate * matches,
+        weightedKd: kd * matches,
+        weightedAvgKills: avgKills * matches,
+      });
+      continue;
+    }
+
+    byMap.set(map, {
+      matches: prev.matches + matches,
+      wins: prev.wins + wins,
+      losses: prev.losses + losses,
+      weightedWinRate: prev.weightedWinRate + winRate * matches,
+      weightedKd: prev.weightedKd + kd * matches,
+      weightedAvgKills: prev.weightedAvgKills + avgKills * matches,
+    });
+  }
+
+  return [...byMap.entries()]
+    .map(([map, value]) => ({
+      map,
+      matches: value.matches,
+      wins: value.wins,
+      losses: value.losses,
+      winRate: Number((value.weightedWinRate / Math.max(value.matches, 1)).toFixed(1)),
+      kd: Number((value.weightedKd / Math.max(value.matches, 1)).toFixed(2)),
+      avgKills: Number((value.weightedAvgKills / Math.max(value.matches, 1)).toFixed(1)),
+    }))
+    .sort((a, b) => b.matches - a.matches || a.map.localeCompare(b.map));
+}
+
+function extractActivity(history: PlayerMatch[]): ActivityInfo {
+  const ordered = [...history].sort((a, b) => getMatchTimestamp(b) - getMatchTimestamp(a));
+  const activeMatch = ordered.find((match) => {
+    if (isFinishedMatch(match)) {
+      return false;
+    }
+    const status = normalizeToken(match.status);
+    if (!status) {
+      return Boolean(match.match_id);
+    }
+    return ["ongoing", "started", "configuring", "configured", "voting", "ready", "captainpick", "checkin"].includes(status);
+  });
+
+  const matchId = String(activeMatch?.match_id ?? "").trim();
+  if (!matchId) {
+    return { inMatch: false };
+  }
+
+  return {
+    inMatch: true,
+    matchId,
+    matchUrl: `https://www.faceit.com/ru/cs2/room/${matchId}`,
+  };
+}
+
+function extractLastFinishedMatch(history: PlayerMatch[], playerId: string): LastMatchInfo | null {
+  const completed = history
+    .filter(isFinishedMatch)
+    .sort((a, b) => getMatchTimestamp(b) - getMatchTimestamp(a));
+
+  const latest = completed[0];
+  if (!latest) {
+    return null;
+  }
+
+  const matchId = String(latest.match_id ?? "").trim();
+  if (!matchId) {
+    return null;
+  }
+
+  return {
+    matchId,
+    matchUrl: `https://www.faceit.com/ru/cs2/room/${matchId}`,
+    playedAtIso: new Date(getMatchTimestamp(latest) * 1000).toISOString(),
+    map: resolveMapFromHistory(latest),
+    win: detectWinForPlayer(latest, playerId),
+    kills: resolveKillsFromHistory(latest),
+    deaths: resolveDeathsFromHistory(latest),
+  };
+}
+
 async function loadPlayerStats(nickname: string, env: Env): Promise<PlayerViewModel> {
-  const cached = playerMemoryCache.get(nickname.toLowerCase());
+  const key = nickname.toLowerCase();
+  const cached = playerMemoryCache.get(key);
   if (cached && cached.expiresAt > Date.now()) {
     return cached.payload;
   }
 
   const player = await faceitFetch<FaceitPlayer>(`/players?nickname=${encodeURIComponent(nickname)}`, env);
-  const stats = await faceitFetch<FaceitPlayerStats>(`/players/${player.player_id}/stats/${GAME_ID}`, env);
+  const [stats, history] = await Promise.all([
+    faceitFetch<FaceitPlayerStats>(`/players/${player.player_id}/stats/${GAME_ID}`, env),
+    fetchRecentHistory(player.player_id, env),
+  ]);
 
-  const history = await fetchRecentHistory(player.player_id, env);
-
+  const lifetime = stats.lifetime;
   const daySource = history.filter(isMatchFromTodayMoscow);
   const monthSource = history.filter((match) => getMatchTimestamp(match) >= startOfMonthUnixMoscow());
-  const lifetime = stats.lifetime;
-
   const [day, month, avgData] = await Promise.all([
     summarizeMatches(daySource, player.player_id),
     summarizeMatches(monthSource, player.player_id),
@@ -616,24 +711,45 @@ async function loadPlayerStats(nickname: string, env: Env): Promise<PlayerViewMo
     nickname: player.nickname,
     playerId: player.player_id,
     avatar: player.avatar || FALLBACK_AVATAR,
-    faceitUrl: player.faceit_url || `https://www.faceit.com/ru/players/${player.nickname}`,
+    faceitUrl: `https://www.faceit.com/ru/players/${player.nickname}`,
     hasPremium: detectPremium(player),
     elo: parseNumber(player.games?.[GAME_ID]?.faceit_elo),
     kd,
     avg: avgData.avg,
     avgMatchesCount: avgData.resolvedMatches,
-    maps: extractMapMatches(stats),
+    maps: extractMapStats(stats),
     day,
     month,
     total: extractTotalStats(lifetime),
+    activity: extractActivity(history),
+    lastMatch: extractLastFinishedMatch(history, player.player_id),
   };
 
-  playerMemoryCache.set(nickname.toLowerCase(), {
+  playerMemoryCache.set(key, {
     expiresAt: Date.now() + PLAYER_CACHE_TTL_MS,
     payload,
   });
 
   return payload;
+}
+
+async function searchPlayers(query: string, env: Env): Promise<SearchApiResponse> {
+  const trimmed = query.trim();
+  if (trimmed.length < 2) {
+    return { items: [] };
+  }
+
+  const params = new URLSearchParams({ nickname: trimmed, offset: "0", limit: "8" });
+  const response = await faceitFetch<FaceitSearchResponse>(`/search/players?${params.toString()}`, env, 1);
+  const items = (response.items ?? [])
+    .map((item) => ({
+      nickname: String(item.nickname ?? "").trim(),
+      avatar: String(item.avatar ?? FALLBACK_AVATAR),
+      elo: parseNumber(item.games?.[GAME_ID]?.faceit_elo),
+    }))
+    .filter((item) => item.nickname);
+
+  return { items };
 }
 
 function pickCorsOrigin(request: Request, env: Env): string {
@@ -675,7 +791,8 @@ export default {
       return json({ ok: true }, { headers });
     }
 
-    if (url.pathname !== "/api/stats" && url.pathname !== "/api/player-stats") {
+    const validPaths = new Set(["/api/stats", "/api/player-stats", "/api/search-players"]);
+    if (!validPaths.has(url.pathname)) {
       return json({ error: "Not Found" }, { status: 404, headers });
     }
 
@@ -684,6 +801,12 @@ export default {
     }
 
     try {
+      if (url.pathname === "/api/search-players") {
+        const query = url.searchParams.get("nickname") ?? "";
+        const payload = await searchPlayers(query, env);
+        return json(payload, { headers });
+      }
+
       if (url.pathname === "/api/player-stats") {
         const nickname = (url.searchParams.get("nickname") ?? "").trim();
         if (!nickname) {
@@ -699,12 +822,14 @@ export default {
           return json(payload, { headers });
         } catch (error) {
           const message = error instanceof Error ? error.message : "Unknown server error";
-          const payload: PlayerApiResponse = {
-            updatedAtIso: new Date().toISOString(),
-            player: null,
-            error: message,
-          };
-          return json(payload, { status: 200, headers });
+          return json(
+            {
+              updatedAtIso: new Date().toISOString(),
+              player: null,
+              error: message,
+            } satisfies PlayerApiResponse,
+            { status: 200, headers },
+          );
         }
       }
 
@@ -712,7 +837,7 @@ export default {
         return json(memoryCache.payload, { headers });
       }
 
-      const settled = await Promise.allSettled(PLAYER_NICKNAMES.map((nickname) => loadPlayerStats(nickname, env)));
+      const settled = await Promise.allSettled(DEFAULT_PLAYER_NICKNAMES.map((nickname) => loadPlayerStats(nickname, env)));
       const players = settled
         .filter((item): item is PromiseFulfilledResult<PlayerViewModel> => item.status === "fulfilled")
         .map((item) => item.value);
