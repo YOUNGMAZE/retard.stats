@@ -1352,9 +1352,9 @@ export default function App() {
 
                     {!mapsSectionOpen && bestMap ? (
                       <div className="mt-2 rounded-md border border-zinc-800/80 px-2 py-1.5">
-                        <div className="flex items-center justify-center gap-2">
-                          <p className="text-sm font-black uppercase tracking-wide text-zinc-100">Лучшая карта -</p>
-                          <div className="w-[132px]">
+                        <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-1">
+                          <p className="text-right text-sm font-black uppercase tracking-wide text-yellow-300">Лучшая карта -</p>
+                          <div className="w-[132px] justify-self-center">
                             <button
                               type="button"
                               onClick={() => toggleMapPanel(player.playerId, collapsedBestMapPanelKey)}
@@ -1379,6 +1379,7 @@ export default function App() {
                               </span>
                             </button>
                           </div>
+                          <div aria-hidden className="h-0" />
                         </div>
 
                         <div className={`grid transition-all duration-300 ${isCollapsedBestMapOpen ? "mt-2 grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"}`}>
