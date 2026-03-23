@@ -11,7 +11,7 @@ const STATS_API_URL = (import.meta.env.VITE_STATS_API_URL || DEFAULT_STATS_API_U
 const DEFAULT_PLAYERS = ["mazedaddy", "SEXN", "unborrasq"];
 const MAX_SELECTED_PLAYERS = 8;
 
-type LayoutMode = "row" | "column" | "mini";
+type LayoutMode = "row" | "mini";
 
 type WindowStats = {
   matches: number;
@@ -441,7 +441,7 @@ function renderLastMatchLine(lastMatch: LastMatchInfo | null) {
 export default function App() {
   const [players, setPlayers] = useState<PlayerViewModel[]>([]);
   const [selectedNicknames, setSelectedNicknames] = useState<string[]>(DEFAULT_PLAYERS);
-  const [layoutMode, setLayoutMode] = useState<LayoutMode>("column");
+  const [layoutMode, setLayoutMode] = useState<LayoutMode>("row");
   const [isMobileDevice, setIsMobileDevice] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
@@ -684,7 +684,7 @@ export default function App() {
   useEffect(() => {
     try {
       const rawLayout = localStorage.getItem(LOCAL_LAYOUT_KEY);
-      if (rawLayout === "row" || rawLayout === "column" || rawLayout === "mini") {
+      if (rawLayout === "row" || rawLayout === "mini") {
         setLayoutMode(rawLayout);
         hasSavedLayoutRef.current = true;
       }
@@ -909,12 +909,7 @@ export default function App() {
     return Math.ceil(remainder / 1000);
   }, [nowTick, updatedAt]);
 
-  const effectiveLayoutMode = useMemo<LayoutMode>(() => {
-    if (isMobileDevice && layoutMode === "row") {
-      return "column";
-    }
-    return layoutMode;
-  }, [isMobileDevice, layoutMode]);
+  const effectiveLayoutMode = useMemo<LayoutMode>(() => layoutMode, [layoutMode]);
 
   const listClassName = useMemo(() => {
     if (effectiveLayoutMode === "row") {
@@ -923,7 +918,7 @@ export default function App() {
     if (effectiveLayoutMode === "mini") {
       return "space-y-3";
     }
-    return "divide-y divide-zinc-800/80 border-y border-zinc-800/80";
+    return "grid grid-cols-1 gap-8 md:grid-cols-2";
   }, [effectiveLayoutMode]);
 
   const visiblePlayers = useMemo(() => {
@@ -1146,7 +1141,6 @@ export default function App() {
             <p className="text-sm text-zinc-400">Дизайн</p>
             <div className="inline-flex rounded-md border border-zinc-700 bg-zinc-900/80 p-1 text-sm">
               {([
-                ["column", "В колонну"],
                 ["row", "В строку"],
                 ["mini", "Мини"],
               ] as const).map(([mode, label]) => (
@@ -1263,11 +1257,10 @@ export default function App() {
                             const expanded = Boolean(expandedMaps[mapKey]);
                             return (
                               <div key={mapKey} className="mx-auto w-[168px] rounded-md border border-zinc-800/80 p-2">
-                                <p className="truncate text-center font-medium text-zinc-100">{entry.map}</p>
                                 <button
                                   type="button"
                                   onClick={() => toggleMapPanel(player.playerId, entry.map)}
-                                  className="group mt-2 block w-full overflow-hidden rounded-md border border-zinc-700/80 bg-zinc-900/70"
+                                  className="group block w-full overflow-hidden rounded-md border border-zinc-700/80 bg-zinc-900/70"
                                 >
                                   <span className="relative block aspect-[250/88] w-full overflow-hidden rounded-md bg-zinc-900">
                                     <img
@@ -1279,6 +1272,9 @@ export default function App() {
                                         event.currentTarget.src = mapPreviewUri(entry.map);
                                       }}
                                     />
+                                    <span className="absolute inset-0 flex items-center justify-center bg-black/30 px-2 text-center text-lg font-black uppercase tracking-wide text-zinc-100">
+                                      {entry.map}
+                                    </span>
                                   </span>
                                 </button>
                                 <p className="mt-2 text-center text-xs">
