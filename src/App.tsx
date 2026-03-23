@@ -355,6 +355,12 @@ function mapPreviewUri(mapName: string): string {
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
 
+function avatarFallbackUri(title: string): string {
+  const safeTitle = (title || "?").slice(0, 1).toUpperCase();
+  const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120' viewBox='0 0 120 120'><rect width='120' height='120' fill='#18181b'/><circle cx='60' cy='44' r='22' fill='#27272a'/><rect x='22' y='74' width='76' height='30' rx='15' fill='#27272a'/><text x='60' y='66' text-anchor='middle' font-family='Arial,Helvetica,sans-serif' font-size='28' font-weight='700' fill='#d4d4d8'>${safeTitle}</text></svg>`;
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+}
+
 function getMapIconSrc(mapName: string): string {
   const key = normalizeMapKey(mapName);
   return ROOT_MAP_ICON_BY_KEY[key] || MAP_ICON_BY_KEY[key] || mapPreviewUri(mapName);
@@ -476,6 +482,7 @@ export default function App() {
   const playersRef = useRef<PlayerViewModel[]>([]);
   const selectedNicknamesRef = useRef<string[]>(DEFAULT_PLAYERS);
   const hasSavedLayoutRef = useRef(false);
+  const searchContainerRef = useRef<HTMLDivElement | null>(null);
   const isAdminUser = useMemo(() => String(authUsername ?? "").trim().toLowerCase() === ADMIN_USERNAME_NORMALIZED, [authUsername]);
 
   useEffect(() => {
@@ -918,6 +925,25 @@ export default function App() {
     return () => window.clearInterval(tickId);
   }, []);
 
+  useEffect(() => {
+    if (!searchResults.length) {
+      return;
+    }
+
+    const handleOutsideClick = (event: MouseEvent) => {
+      if (!searchContainerRef.current) {
+        return;
+      }
+      if (searchContainerRef.current.contains(event.target as Node)) {
+        return;
+      }
+      setSearchResults([]);
+    };
+
+    window.addEventListener("mousedown", handleOutsideClick);
+    return () => window.removeEventListener("mousedown", handleOutsideClick);
+  }, [searchResults.length]);
+
   const secondsToNextRefresh = useMemo(() => {
     if (!updatedAt) {
       return REFRESH_MS / 1000;
@@ -1212,7 +1238,7 @@ export default function App() {
                 </span>
               ))}
             </div>
-            <div className="relative max-w-md">
+            <div ref={searchContainerRef} className="relative max-w-md">
               <input
                 value={searchQuery}
                 onChange={(event) => setSearchQuery(event.target.value)}
@@ -1231,7 +1257,7 @@ export default function App() {
                   searchResults.length > 0 ? "is-open" : "is-closed"
                 }`}
               >
-                <div className="collapse-inner">
+                <div className="collapse-inner max-h-72 overflow-y-auto">
                   {searchResults.map((result) => (
                     <button
                       key={result.nickname}
@@ -1244,7 +1270,14 @@ export default function App() {
                       className="ui-action flex w-full items-center justify-between px-3 py-2 text-left text-sm transition hover:bg-zinc-800"
                     >
                       <span className="inline-flex items-center gap-2">
-                        <img src={result.avatar} alt={result.nickname} className="h-5 w-5 rounded-full object-cover" />
+                        <img
+                          src={result.avatar}
+                          alt={result.nickname}
+                          className="h-5 w-5 rounded-full object-cover"
+                          onError={(event) => {
+                            event.currentTarget.src = avatarFallbackUri(result.nickname);
+                          }}
+                        />
                         {result.nickname}
                       </span>
                       <span className="text-zinc-400">ELO {result.elo}</span>
@@ -1285,8 +1318,9 @@ export default function App() {
             Загружаем статистику игроков...
           </div>
         ) : (
-          <ul className={listClassName}>
-            {visiblePlayers.map((player) => {
+          <>
+            <ul className={listClassName}>
+              {visiblePlayers.map((player) => {
               const playerNicknameKey = nicknameKey(player.nickname);
               const playerAnimationClass = removingNicknames[playerNicknameKey]
                 ? "player-item-removing"
@@ -1328,7 +1362,14 @@ export default function App() {
                 >
                   <div className="mb-4 flex items-center justify-between gap-3">
                     <div className="flex items-center gap-4">
-                      <img src={player.avatar} alt={player.nickname} className="h-14 w-14 rounded-full border border-zinc-700 object-cover" />
+                      <img
+                        src={player.avatar}
+                        alt={player.nickname}
+                        className="h-14 w-14 rounded-full border border-zinc-700 object-cover"
+                        onError={(event) => {
+                          event.currentTarget.src = avatarFallbackUri(player.nickname);
+                        }}
+                      />
                       <div>
                         <a href={player.faceitUrl} target="_blank" rel="noreferrer" className="text-xl font-semibold tracking-tight transition hover:text-orange-300">
                           {player.nickname}
@@ -1432,7 +1473,7 @@ export default function App() {
                                         isMobileRowMode ? "text-base" : "text-lg"
                                       } ${mapLabelRightPaddingClass}`}
                                     >
-                                      {entry.map}
+                                      <span className="max-w-[92%] truncate">{entry.map}</span>
                                     </span>
                                   </span>
                                 </button>
@@ -1487,7 +1528,7 @@ export default function App() {
                                     normalizeMapKey(bestMap.map) === "overpass" ? "pr-0.5" : "pr-2"
                                   }`}
                                 >
-                                  {bestMap.map}
+                                  <span className="max-w-[92%] truncate">{bestMap.map}</span>
                                 </span>
                               </span>
                             </button>
@@ -1518,8 +1559,14 @@ export default function App() {
                   </div>
                 </li>
               );
-            })}
-          </ul>
+              })}
+            </ul>
+            {!visiblePlayers.length && !isInitialLoading ? (
+              <p className="rounded-md border border-zinc-800/80 bg-zinc-900/40 p-4 text-sm text-zinc-400">
+                Нет отображаемых игроков. Добавь игрока через поиск выше.
+              </p>
+            ) : null}
+          </>
         )}
       </div>
     </main>
