@@ -842,6 +842,52 @@ function findValueByKey(record: Record<string, unknown> | undefined, keys: strin
   return pickExistingValue(record, keys);
 }
 
+function findValueByKeyIncludes(record: Record<string, unknown> | undefined, includes: string[]): unknown {
+  if (!record) {
+    return undefined;
+  }
+
+  const normalizedIncludes = includes.map((item) => normalizeToken(item)).filter(Boolean);
+  if (!normalizedIncludes.length) {
+    return undefined;
+  }
+
+  for (const [key, value] of Object.entries(record)) {
+    const normalizedKey = normalizeToken(key);
+    if (!normalizedKey) {
+      continue;
+    }
+
+    if (normalizedIncludes.every((token) => normalizedKey.includes(token))) {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
+const KNOWN_WEAPON_TOKENS_SORTED = [...new Set([...KNOWN_WEAPON_LABELS, ...Object.keys(WEAPON_ALIASES)])].sort(
+  (a, b) => b.length - a.length,
+);
+
+function findWeaponTokenInKey(normalizedKey: string): string {
+  if (!normalizedKey) {
+    return "";
+  }
+
+  for (const token of KNOWN_WEAPON_TOKENS_SORTED) {
+    if (!normalizedKey.includes(token)) {
+      continue;
+    }
+    const resolved = resolveWeaponToken(token);
+    if (resolved) {
+      return resolved;
+    }
+  }
+
+  return "";
+}
+
 function normalizeFactionToken(value: unknown): string {
   const token = normalizeToken(value);
   if (!token) {
@@ -1396,31 +1442,53 @@ function collectWeaponStatsFromLifetime(
       continue;
     }
 
-    const keyMatchers: Array<{ suffixes: string[]; field: "kills" | "matches" | "hitRate" | "avgKills"; parser: (input: unknown) => number }> = [
-      { suffixes: ["kills"], field: "kills", parser: parseDecimal },
-      { suffixes: ["matches", "games"], field: "matches", parser: parseNumber },
-      { suffixes: ["accuracy", "accuracypercent", "hitrate", "hitratepercent", "headshots", "headshotspercent", "hs", "hspercent"], field: "hitRate", parser: parsePercent },
-      { suffixes: ["averagekills", "avgkills", "killspermatch"], field: "avgKills", parser: parseDecimal },
-    ];
+    let weaponToken = resolveWeaponToken(normalizedKey);
+    if (!weaponToken) {
+      weaponToken = findWeaponTokenInKey(normalizedKey);
+    }
+    if (!weaponToken) {
+      continue;
+    }
 
-    for (const matcher of keyMatchers) {
-      for (const suffix of matcher.suffixes) {
-        if (!normalizedKey.endsWith(suffix)) {
-          continue;
-        }
+    const isAvgKey =
+      (normalizedKey.includes("avg") || normalizedKey.includes("average") || normalizedKey.includes("permatch")) &&
+      (normalizedKey.includes("kill") || normalizedKey.includes("frag"));
+    const isHitRateKey =
+      normalizedKey.includes("accuracy") ||
+      normalizedKey.includes("hitrate") ||
+      normalizedKey.includes("headshotpercent") ||
+      normalizedKey.includes("hspercent");
+    const isMatchesKey = normalizedKey.includes("match") || normalizedKey.includes("game") || normalizedKey.includes("played");
+    const isKillsKey = (normalizedKey.includes("kill") || normalizedKey.includes("frag")) && !isAvgKey;
 
-        const prefix = normalizedKey.slice(0, -suffix.length);
-        const weaponToken = resolveWeaponToken(prefix);
-        if (!weaponToken) {
-          continue;
-        }
+    if (isAvgKey) {
+      const parsed = parseDecimal(value);
+      if (parsed > 0) {
+        upsert(weaponToken, { avgKills: parsed });
+      }
+      continue;
+    }
 
-        const parsed = matcher.parser(value);
-        if (parsed <= 0) {
-          continue;
-        }
+    if (isHitRateKey) {
+      const parsed = parsePercent(value);
+      if (parsed > 0) {
+        upsert(weaponToken, { hitRate: parsed });
+      }
+      continue;
+    }
 
-        upsert(weaponToken, { [matcher.field]: parsed } as Partial<{ matches: number; kills: number; hitRate: number; avgKills: number }>);
+    if (isMatchesKey) {
+      const parsed = parseNumber(value);
+      if (parsed > 0) {
+        upsert(weaponToken, { matches: parsed });
+      }
+      continue;
+    }
+
+    if (isKillsKey) {
+      const parsed = parseDecimal(value);
+      if (parsed > 0) {
+        upsert(weaponToken, { kills: parsed });
       }
     }
   }
@@ -1455,8 +1523,14 @@ function extractWeaponStats(stats: FaceitPlayerStats): { weapons: WeaponStats[];
     }
 
     const segmentStats = segment.stats;
-    const matches = parseNumber(findValueByKey(segmentStats, ["Matches", "matches", "Games", "games"]));
-    const kills = parseDecimal(findValueByKey(segmentStats, ["Kills", "kills", "Total Kills", "total_kills", "Weapon Kills", "weapon_kills"]));
+    const matches = parseNumber(
+      findValueByKey(segmentStats, ["Matches", "matches", "Games", "games"]) ??
+        findValueByKeyIncludes(segmentStats, ["match"]),
+    );
+    const kills = parseDecimal(
+      findValueByKey(segmentStats, ["Kills", "kills", "Total Kills", "total_kills", "Weapon Kills", "weapon_kills"]) ??
+        findValueByKeyIncludes(segmentStats, ["kill"]),
+    );
     const hitRate = parsePercent(
       findValueByKey(segmentStats, [
         "Accuracy %",
@@ -1467,11 +1541,15 @@ function extractWeaponStats(stats: FaceitPlayerStats): { weapons: WeaponStats[];
         "hits_percent",
         "Headshots %",
         "HS %",
-      ]),
+      ]) ??
+        findValueByKeyIncludes(segmentStats, ["accuracy"]) ??
+        findValueByKeyIncludes(segmentStats, ["hitrate"]),
     );
 
     let avgKills = parseDecimal(
-      findValueByKey(segmentStats, ["Average Kills", "Average Kills per Match", "Avg Kills", "average_kills", "avg_kills"]),
+      findValueByKey(segmentStats, ["Average Kills", "Average Kills per Match", "Avg Kills", "average_kills", "avg_kills"]) ??
+        findValueByKeyIncludes(segmentStats, ["avg", "kill"]) ??
+        findValueByKeyIncludes(segmentStats, ["average", "kill"]),
     );
     if (avgKills <= 0 && kills > 0 && matches > 0) {
       avgKills = kills / matches;
@@ -1504,6 +1582,20 @@ function extractWeaponStats(stats: FaceitPlayerStats): { weapons: WeaponStats[];
   return {
     weapons,
     favoriteWeapon: weapons[0] ?? null,
+  };
+}
+
+function mergeStatsSourcesForWeapons(primary: FaceitPlayerStats, secondary: FaceitPlayerStats | null): FaceitPlayerStats {
+  if (!secondary) {
+    return primary;
+  }
+
+  return {
+    lifetime: {
+      ...(secondary.lifetime ?? {}),
+      ...(primary.lifetime ?? {}),
+    },
+    segments: [...(primary.segments ?? []), ...(secondary.segments ?? [])],
   };
 }
 
@@ -1580,10 +1672,14 @@ async function loadPlayerStats(nickname: string, env: Env): Promise<PlayerViewMo
   }
 
   const player = await faceitFetch<FaceitPlayer>(`/players?nickname=${encodeURIComponent(nickname)}`, env);
-  const [stats, history] = await Promise.all([
+  const [statsByMode, statsAllModes, history] = await Promise.all([
     faceitFetch<FaceitPlayerStats>(`/players/${player.player_id}/stats/${GAME_ID}?game_mode=${encodeURIComponent(GAME_MODE)}`, env),
+    faceitFetch<FaceitPlayerStats>(`/players/${player.player_id}/stats/${GAME_ID}`, env, 1).catch(() => null),
     fetchRecentHistory(player.player_id, env),
   ]);
+
+  const stats = statsByMode;
+  const weaponStatsSource = mergeStatsSourcesForWeapons(statsByMode, statsAllModes);
 
   const lifetime = stats.lifetime;
   const daySource = history.filter(isMatchFromTodayMoscow);
@@ -1596,7 +1692,9 @@ async function loadPlayerStats(nickname: string, env: Env): Promise<PlayerViewMo
   ]);
 
   const kd = parseDecimal(findValueByKey(lifetime, ["Average K/D Ratio", "Average KD Ratio", "K/D Ratio", "K/D"]));
-  const weaponData = extractWeaponStats(stats);
+  const weaponData = extractWeaponStats(weaponStatsSource);
+  const mapsByMode = extractMapStats(stats);
+  const maps = mapsByMode.length ? mapsByMode : extractMapStats(weaponStatsSource);
 
   const payload: PlayerViewModel = {
     nickname: player.nickname,
@@ -1608,7 +1706,7 @@ async function loadPlayerStats(nickname: string, env: Env): Promise<PlayerViewMo
     kd,
     avg: avgData.avg,
     avgMatchesCount: avgData.resolvedMatches,
-    maps: extractMapStats(stats),
+    maps,
     weapons: weaponData.weapons,
     favoriteWeapon: weaponData.favoriteWeapon,
     day,
