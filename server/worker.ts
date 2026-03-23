@@ -256,7 +256,8 @@ async function hashPassword(password: string, salt: string, env: Env): Promise<s
     {
       name: "PBKDF2",
       salt: encoder.encode(salt),
-      iterations: 120_000,
+      // Cloudflare Workers PBKDF2 limit is 100000 iterations.
+      iterations: 100_000,
       hash: "SHA-256",
     },
     key,
