@@ -226,6 +226,12 @@ type FaceitPlayer = {
   nickname: string;
   avatar?: string;
   faceit_url?: string;
+  status?: string;
+  game_status?: string;
+  active_match_id?: string;
+  current_match_id?: string;
+  ongoing_match_id?: string;
+  match_id?: string;
   membership_type?: string;
   memberships?: unknown;
   premium?: boolean;
@@ -235,8 +241,13 @@ type FaceitPlayer = {
   games?: {
     [key: string]: {
       faceit_elo?: number;
+      status?: string;
+      current_match_id?: string;
+      ongoing_match_id?: string;
+      match_id?: string;
     };
   };
+  [key: string]: unknown;
 };
 
 type FaceitPlayerStats = {
@@ -1633,6 +1644,120 @@ function extractActivity(history: PlayerMatch[]): ActivityInfo {
   };
 }
 
+function extractMatchIdFromPlayerPayload(player: FaceitPlayer): string {
+  const gamePayload = (player.games?.[GAME_ID] ?? {}) as Record<string, unknown>;
+  const playerPayload = player as Record<string, unknown>;
+
+  const candidate =
+    pickExistingValue(playerPayload, ["active_match_id", "current_match_id", "ongoing_match_id", "match_id"]) ??
+    pickExistingValue(gamePayload, ["active_match_id", "current_match_id", "ongoing_match_id", "match_id"]);
+
+  const matchId = String(candidate ?? "").trim();
+  return /^[0-9a-f-]{32,36}$/i.test(matchId) ? matchId : "";
+}
+
+function isPlayerLikelyInMatch(player: FaceitPlayer): boolean {
+  const gamePayload = (player.games?.[GAME_ID] ?? {}) as Record<string, unknown>;
+  const playerPayload = player as Record<string, unknown>;
+
+  const statuses = [
+    player.status,
+    player.game_status,
+    pickExistingValue(playerPayload, ["status", "game_status", "activity", "presence", "state"]),
+    pickExistingValue(gamePayload, ["status", "game_status", "activity", "presence", "state"]),
+  ];
+
+  for (const entry of statuses) {
+    const token = normalizeToken(entry);
+    if (!token) {
+      continue;
+    }
+
+    if (
+      [
+        "inmatch",
+        "in_game",
+        "ingame",
+        "playing",
+        "busy",
+        "ongoing",
+        "started",
+        "match",
+      ].includes(token)
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+async function fetchLiveRoomUrlFromProfile(nickname: string): Promise<string | null> {
+  const profileUrl = `https://www.faceit.com/ru/players/${encodeURIComponent(nickname)}`;
+
+  try {
+    const response = await fetch(profileUrl, {
+      headers: {
+        Accept: "text/html",
+      },
+    });
+    if (!response.ok) {
+      return null;
+    }
+
+    const html = await response.text();
+    const patterns = [
+      /https:\\/\\/www\.faceit\.com\\\/[a-z]{2}\\\/cs2\\\/room\\\/([0-9a-f-]{36})/i,
+      /https:\/\/www\.faceit\.com\/[a-z]{2}\/cs2\/room\/([0-9a-f-]{36})/i,
+      /\/cs2\/room\/([0-9a-f-]{36})/i,
+    ];
+
+    for (const pattern of patterns) {
+      const match = html.match(pattern);
+      const matchId = String(match?.[1] ?? "").trim();
+      if (matchId) {
+        return `https://www.faceit.com/ru/cs2/room/${matchId}`;
+      }
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
+async function resolveActivity(player: FaceitPlayer, history: PlayerMatch[]): Promise<ActivityInfo> {
+  const fromHistory = extractActivity(history);
+  if (fromHistory.inMatch && fromHistory.matchUrl) {
+    return fromHistory;
+  }
+
+  const matchIdFromPayload = extractMatchIdFromPlayerPayload(player);
+  if (matchIdFromPayload) {
+    return {
+      inMatch: true,
+      matchId: matchIdFromPayload,
+      matchUrl: `https://www.faceit.com/ru/cs2/room/${matchIdFromPayload}`,
+    };
+  }
+
+  if (!isPlayerLikelyInMatch(player)) {
+    return { inMatch: false };
+  }
+
+  const profileRoomUrl = await fetchLiveRoomUrlFromProfile(player.nickname);
+  if (!profileRoomUrl) {
+    return { inMatch: false };
+  }
+
+  const matchId = profileRoomUrl.split("/").pop() ?? "";
+  return {
+    inMatch: true,
+    matchId,
+    matchUrl: profileRoomUrl,
+  };
+}
+
 async function extractLastFinishedMatch(history: PlayerMatch[], playerId: string, env: Env): Promise<LastMatchInfo | null> {
   const completed = history
     .filter(isFinishedMatch)
@@ -1693,11 +1818,12 @@ async function loadPlayerStats(nickname: string, env: Env): Promise<PlayerViewMo
   const lifetime = stats.lifetime;
   const daySource = history.filter(isMatchFromTodayMoscow);
   const monthSource = history.filter((match) => getMatchTimestamp(match) >= startOfMonthUnixMoscow());
-  const [day, month, avgData, lastMatch] = await Promise.all([
+  const [day, month, avgData, lastMatch, activity] = await Promise.all([
     summarizeMatches(daySource, player.player_id),
     summarizeMatches(monthSource, player.player_id),
     calculateLastMatchesAvgKills(player.player_id, history, env, lifetime),
     extractLastFinishedMatch(history, player.player_id, env),
+    resolveActivity(player, history),
   ]);
 
   const kd = parseDecimal(findValueByKey(lifetime, ["Average K/D Ratio", "Average KD Ratio", "K/D Ratio", "K/D"]));
@@ -1721,7 +1847,7 @@ async function loadPlayerStats(nickname: string, env: Env): Promise<PlayerViewMo
     day,
     month,
     total: extractTotalStats(lifetime),
-    activity: extractActivity(history),
+    activity,
     lastMatch,
   };
 

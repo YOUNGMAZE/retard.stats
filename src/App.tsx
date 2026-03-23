@@ -136,10 +136,11 @@ function normalizeActivity(value: unknown): ActivityInfo {
   const inMatch = Boolean(source.inMatch);
   const matchId = String(source.matchId ?? "").trim();
   const matchUrl = String(source.matchUrl ?? "").trim();
+  const resolvedMatchUrl = matchUrl || (matchId ? `https://www.faceit.com/ru/cs2/room/${matchId}` : "");
   return {
     inMatch,
     matchId: inMatch && matchId ? matchId : undefined,
-    matchUrl: inMatch && matchUrl ? matchUrl : undefined,
+    matchUrl: inMatch && resolvedMatchUrl ? resolvedMatchUrl : undefined,
   };
 }
 
@@ -1377,8 +1378,13 @@ export default function App() {
                         {player.hasPremium ? <span className="ml-2 text-xs font-semibold uppercase tracking-wide text-yellow-300">Premium</span> : null}
                         <p className="mt-1 text-sm">
                           {player.activity.inMatch && player.activity.matchUrl ? (
-                            <a href={player.activity.matchUrl} target="_blank" rel="noreferrer" className="text-orange-400 transition hover:text-orange-300">
-                              В матче
+                            <a
+                              href={player.activity.matchUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-orange-400 underline-offset-2 transition hover:text-orange-300 hover:underline"
+                            >
+                              Играет сейчас
                             </a>
                           ) : (
                             <span className="text-zinc-500">Не активен</span>
