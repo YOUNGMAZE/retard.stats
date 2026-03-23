@@ -8,6 +8,42 @@ const DEFAULT_PLAYER_NICKNAMES = ["mazedaddy", "SEXN", "unborrasq"];
 const MOSCOW_UTC_OFFSET_HOURS = 3;
 const FALLBACK_AVATAR = "https://cdn-frontend.faceit-cdn.net/web/300/src/app/assets/images/no-avatar.jpg";
 const ADMIN_USERNAME_NORMALIZED = "maze";
+const KNOWN_WEAPON_LABELS = new Set([
+  "ak47",
+  "m4a1s",
+  "m4a4",
+  "awp",
+  "deagle",
+  "deserteagle",
+  "usp",
+  "usps",
+  "glock",
+  "famas",
+  "galil",
+  "mp9",
+  "mac10",
+  "mp7",
+  "ump45",
+  "p90",
+  "bizon",
+  "xm1014",
+  "mag7",
+  "nova",
+  "ssg08",
+  "scar20",
+  "g3sg1",
+  "tec9",
+  "five7",
+  "p250",
+  "cz75",
+  "zeus",
+  "hegrenade",
+  "molotov",
+  "incgrenade",
+  "smokegrenade",
+  "flashbang",
+  "knife",
+]);
 
 type WindowStats = {
   matches: number;
@@ -22,6 +58,14 @@ type MapStats = {
   wins: number;
   losses: number;
   kd: number;
+  avgKills: number;
+};
+
+type WeaponStats = {
+  weapon: string;
+  matches: number;
+  kills: number;
+  hitRate: number;
   avgKills: number;
 };
 
@@ -52,6 +96,8 @@ type PlayerViewModel = {
   avg: number;
   avgMatchesCount: number;
   maps: MapStats[];
+  weapons: WeaponStats[];
+  favoriteWeapon: WeaponStats | null;
   day: WindowStats;
   month: WindowStats;
   total: WindowStats;
@@ -205,6 +251,23 @@ function normalizeMapName(value: unknown): string {
   }
   const withoutPrefix = raw.replace(/^de_/i, "").replace(/^cs_/i, "");
   return withoutPrefix.charAt(0).toUpperCase() + withoutPrefix.slice(1);
+}
+
+function normalizeWeaponName(value: unknown): string {
+  const raw = String(value ?? "").trim();
+  if (!raw) {
+    return "Unknown";
+  }
+
+  const cleaned = raw.replace(/^weapon[_\s-]*/i, "").replace(/_/g, " ").trim();
+  if (!cleaned) {
+    return "Unknown";
+  }
+
+  return cleaned
+    .split(/\s+/)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(" ");
 }
 
 function parseDecimal(value: unknown): number {
@@ -868,6 +931,28 @@ function extractKillsFromMatchStats(matchStats: FaceitMatchStats | null, playerI
   return null;
 }
 
+function extractDeathsFromMatchStats(matchStats: FaceitMatchStats | null, playerId: string): number | null {
+  if (!matchStats?.rounds?.length) {
+    return null;
+  }
+
+  for (const round of matchStats.rounds) {
+    for (const team of round.teams ?? []) {
+      for (const player of team.players ?? []) {
+        if (player.player_id !== playerId) {
+          continue;
+        }
+
+        const rawDeaths = findValueByKey(player.player_stats, ["Deaths", "deaths", "D", "Total Deaths", "total_deaths", "i8"]);
+        const parsed = parseDecimal(rawDeaths);
+        return parsed > 0 || String(rawDeaths ?? "").trim() === "0" ? parsed : null;
+      }
+    }
+  }
+
+  return null;
+}
+
 async function calculateLastMatchesAvgKills(
   playerId: string,
   history: PlayerMatch[],
@@ -1039,6 +1124,116 @@ function extractMapStats(stats: FaceitPlayerStats): MapStats[] {
     .sort((a, b) => b.matches - a.matches || a.map.localeCompare(b.map));
 }
 
+function isWeaponSegment(segment: { label?: string; type?: string; mode?: string } | undefined): boolean {
+  const label = String(segment?.label ?? "").trim();
+  if (!label || /^overall$/i.test(label)) {
+    return false;
+  }
+
+  const typeToken = normalizeToken(segment?.type);
+  const modeToken = normalizeToken(segment?.mode);
+  if (typeToken.includes("weapon") || modeToken.includes("weapon")) {
+    return true;
+  }
+
+  const normalizedLabel = normalizeToken(label);
+  if (KNOWN_WEAPON_LABELS.has(normalizedLabel)) {
+    return true;
+  }
+
+  // Fallback heuristic for weapon-like labels.
+  return /^(ak|m4|awp|usp|glock|deagle|famas|galil|mp|p90|ssg|scar|g3|tec|five|p250|cz|knife|smoke|flash|molotov|nova|xm)/i.test(label);
+}
+
+function extractWeaponStats(stats: FaceitPlayerStats): { weapons: WeaponStats[]; favoriteWeapon: WeaponStats | null } {
+  const byWeapon = new Map<
+    string,
+    {
+      matches: number;
+      kills: number;
+      weightedHitRate: number;
+      hitWeight: number;
+      weightedAvgKills: number;
+      avgWeight: number;
+    }
+  >();
+
+  for (const segment of stats.segments ?? []) {
+    if (!isWeaponSegment(segment)) {
+      continue;
+    }
+
+    const segmentStats = segment.stats;
+    const matches = parseNumber(findValueByKey(segmentStats, ["Matches", "matches", "Games", "games"]));
+    const kills = parseDecimal(findValueByKey(segmentStats, ["Kills", "kills", "Total Kills", "total_kills", "Weapon Kills", "weapon_kills"]));
+    const hitRate = parsePercent(
+      findValueByKey(segmentStats, [
+        "Accuracy %",
+        "Accuracy",
+        "Hit Rate %",
+        "Hit Rate",
+        "Hits %",
+        "hits_percent",
+        "Headshots %",
+        "HS %",
+      ]),
+    );
+
+    let avgKills = parseDecimal(
+      findValueByKey(segmentStats, ["Average Kills", "Average Kills per Match", "Avg Kills", "average_kills", "avg_kills"]),
+    );
+    if (avgKills <= 0 && kills > 0 && matches > 0) {
+      avgKills = kills / matches;
+    }
+
+    if (kills <= 0 && avgKills <= 0 && hitRate <= 0) {
+      continue;
+    }
+
+    const weapon = normalizeWeaponName(segment.label);
+    const hitWeight = Math.max(kills, matches, 1);
+    const avgWeight = Math.max(matches, 1);
+    const prev = byWeapon.get(weapon);
+
+    if (!prev) {
+      byWeapon.set(weapon, {
+        matches,
+        kills,
+        weightedHitRate: hitRate * hitWeight,
+        hitWeight,
+        weightedAvgKills: avgKills * avgWeight,
+        avgWeight,
+      });
+      continue;
+    }
+
+    byWeapon.set(weapon, {
+      matches: prev.matches + matches,
+      kills: prev.kills + kills,
+      weightedHitRate: prev.weightedHitRate + hitRate * hitWeight,
+      hitWeight: prev.hitWeight + hitWeight,
+      weightedAvgKills: prev.weightedAvgKills + avgKills * avgWeight,
+      avgWeight: prev.avgWeight + avgWeight,
+    });
+  }
+
+  const weapons = [...byWeapon.entries()]
+    .map(([weapon, value]) => ({
+      weapon,
+      matches: Math.round(value.matches),
+      kills: Math.round(value.kills),
+      hitRate: Number((value.weightedHitRate / Math.max(value.hitWeight, 1)).toFixed(1)),
+      avgKills: Number((value.weightedAvgKills / Math.max(value.avgWeight, 1)).toFixed(1)),
+    }))
+    .sort((a, b) => b.kills - a.kills || b.avgKills - a.avgKills || a.weapon.localeCompare(b.weapon))
+    .slice(0, 6);
+
+  return {
+    weapons,
+    favoriteWeapon: weapons[0] ?? null,
+  };
+}
+
 function extractActivity(history: PlayerMatch[]): ActivityInfo {
   const ordered = [...history].sort((a, b) => getMatchTimestamp(b) - getMatchTimestamp(a));
   const activeMatch = ordered.find((match) => {
@@ -1064,7 +1259,7 @@ function extractActivity(history: PlayerMatch[]): ActivityInfo {
   };
 }
 
-function extractLastFinishedMatch(history: PlayerMatch[], playerId: string): LastMatchInfo | null {
+async function extractLastFinishedMatch(history: PlayerMatch[], playerId: string, env: Env): Promise<LastMatchInfo | null> {
   const completed = history
     .filter(isFinishedMatch)
     .sort((a, b) => getMatchTimestamp(b) - getMatchTimestamp(a));
@@ -1079,14 +1274,28 @@ function extractLastFinishedMatch(history: PlayerMatch[], playerId: string): Las
     return null;
   }
 
+  let kills = resolveKillsFromHistory(latest);
+  let deaths = resolveDeathsFromHistory(latest);
+
+  // History payload is inconsistent for per-match K/D, so we enrich the last match from match stats when needed.
+  if (kills === null || deaths === null) {
+    const matchStats = await fetchMatchStats(matchId, env);
+    if (kills === null) {
+      kills = extractKillsFromMatchStats(matchStats, playerId);
+    }
+    if (deaths === null) {
+      deaths = extractDeathsFromMatchStats(matchStats, playerId);
+    }
+  }
+
   return {
     matchId,
     matchUrl: `https://www.faceit.com/ru/cs2/room/${matchId}`,
     playedAtIso: new Date(getMatchTimestamp(latest) * 1000).toISOString(),
     map: resolveMapFromHistory(latest),
     win: detectWinForPlayer(latest, playerId),
-    kills: resolveKillsFromHistory(latest),
-    deaths: resolveDeathsFromHistory(latest),
+    kills,
+    deaths,
   };
 }
 
@@ -1106,13 +1315,15 @@ async function loadPlayerStats(nickname: string, env: Env): Promise<PlayerViewMo
   const lifetime = stats.lifetime;
   const daySource = history.filter(isMatchFromTodayMoscow);
   const monthSource = history.filter((match) => getMatchTimestamp(match) >= startOfMonthUnixMoscow());
-  const [day, month, avgData] = await Promise.all([
+  const [day, month, avgData, lastMatch] = await Promise.all([
     summarizeMatches(daySource, player.player_id),
     summarizeMatches(monthSource, player.player_id),
     calculateLastMatchesAvgKills(player.player_id, history, env, lifetime),
+    extractLastFinishedMatch(history, player.player_id, env),
   ]);
 
   const kd = parseDecimal(findValueByKey(lifetime, ["Average K/D Ratio", "Average KD Ratio", "K/D Ratio", "K/D"]));
+  const weaponData = extractWeaponStats(stats);
 
   const payload: PlayerViewModel = {
     nickname: player.nickname,
@@ -1125,11 +1336,13 @@ async function loadPlayerStats(nickname: string, env: Env): Promise<PlayerViewMo
     avg: avgData.avg,
     avgMatchesCount: avgData.resolvedMatches,
     maps: extractMapStats(stats),
+    weapons: weaponData.weapons,
+    favoriteWeapon: weaponData.favoriteWeapon,
     day,
     month,
     total: extractTotalStats(lifetime),
     activity: extractActivity(history),
-    lastMatch: extractLastFinishedMatch(history, player.player_id),
+    lastMatch,
   };
 
   playerMemoryCache.set(key, {
