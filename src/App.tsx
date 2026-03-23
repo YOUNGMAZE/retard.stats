@@ -213,7 +213,7 @@ function normalizeWeapons(value: unknown): WeaponStats[] {
 function normalizeFavoriteWeapon(value: unknown): WeaponStats | null {
   const row = (value ?? {}) as Partial<WeaponStats>;
   const weapon = String(row.weapon ?? "").trim();
-  if (!weapon) {
+  if (!weapon || /^unknown$/i.test(weapon)) {
     return null;
   }
 
@@ -1101,6 +1101,7 @@ export default function App() {
               const bestMapName = getBestMapName(player.maps);
               const faceitLevel = getFaceitLevel(player.elo);
               const weaponPanelOpen = expandedWeapons[player.playerId] ?? true;
+              const favoriteWeaponName = (player.favoriteWeapon?.weapon ?? "").trim() || (player.weapons[0]?.weapon ?? "").trim();
 
               if (layoutMode === "mini") {
                 return (
@@ -1193,9 +1194,9 @@ export default function App() {
 
                     <div className={`grid transition-all duration-300 ${weaponPanelOpen ? "mt-3 grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"}`}>
                       <div className="overflow-hidden">
-                        {player.favoriteWeapon ? (
+                        {favoriteWeaponName ? (
                           <p className="text-zinc-200">
-                            Любимое оружие: <b className="text-orange-300">{player.favoriteWeapon.weapon}</b>
+                            Любимое оружие: <b className="text-orange-300">{favoriteWeaponName}</b>
                           </p>
                         ) : (
                           <p className="text-zinc-500">Нет данных по оружию.</p>

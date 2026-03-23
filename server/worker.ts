@@ -1576,12 +1576,13 @@ function extractWeaponStats(stats: FaceitPlayerStats): { weapons: WeaponStats[];
       hitRate: Number((value.weightedHitRate / Math.max(value.hitWeight, 1)).toFixed(1)),
       avgKills: Number((value.weightedAvgKills / Math.max(value.avgWeight, 1)).toFixed(1)),
     }))
+    .filter((entry) => entry.weapon.trim().length > 0 && !/^unknown$/i.test(entry.weapon))
     .sort((a, b) => b.kills - a.kills || b.avgKills - a.avgKills || a.weapon.localeCompare(b.weapon))
     .slice(0, 6);
 
   return {
     weapons,
-    favoriteWeapon: weapons[0] ?? null,
+    favoriteWeapon: weapons.find((entry) => entry.weapon.trim().length > 0) ?? null,
   };
 }
 
