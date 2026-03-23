@@ -1269,11 +1269,11 @@ export default function App() {
                                   onClick={() => toggleMapPanel(player.playerId, entry.map)}
                                   className="group mt-2 block w-full overflow-hidden rounded-lg border border-zinc-700/70 bg-zinc-900/60"
                                 >
-                                  <span className="relative block aspect-[16/7] w-full overflow-hidden">
+                                  <span className="relative block aspect-[250/88] w-full overflow-hidden bg-zinc-900">
                                     <img
                                       src={getMapIconSrc(entry.map)}
                                       alt={`Карта ${entry.map}`}
-                                      className="absolute inset-0 block h-full w-full max-w-full object-cover object-center transition-transform duration-300 group-hover:scale-[1.02]"
+                                      className="absolute inset-0 block h-full w-full max-w-full object-contain object-center transition-transform duration-300 group-hover:scale-[1.01]"
                                       onError={(event) => {
                                         // If a custom map file is missing, keep UI stable with an inline fallback image.
                                         event.currentTarget.src = mapPreviewUri(entry.map);
