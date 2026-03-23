@@ -298,6 +298,11 @@ function withBase(path: string): string {
   return `${normalizedBase}${path.replace(/^\//, "")}`;
 }
 
+const ROOT_MAP_ASSETS = import.meta.glob("/maps/*.{jpg,jpeg,png,webp}", {
+  eager: true,
+  import: "default",
+}) as Record<string, string>;
+
 const MAP_ICON_BY_KEY: Record<string, string> = {
   mirage: withBase("maps/mirage.jpg"),
   inferno: withBase("maps/inferno.jpg"),
@@ -310,6 +315,16 @@ const MAP_ICON_BY_KEY: Record<string, string> = {
   overpass: withBase("maps/overpass.jpg"),
   cache: withBase("maps/cache.jpg"),
 };
+
+const ROOT_MAP_ICON_BY_KEY: Record<string, string> = Object.entries(ROOT_MAP_ASSETS).reduce((accumulator, [filePath, fileUrl]) => {
+  const fileName = filePath.split("/").pop() ?? "";
+  const baseName = fileName.replace(/\.[^.]+$/, "");
+  const normalized = normalizeMapKey(baseName);
+  if (normalized) {
+    accumulator[normalized] = fileUrl;
+  }
+  return accumulator;
+}, {} as Record<string, string>);
 
 function normalizeMapKey(mapName: string): string {
   return mapName
@@ -336,7 +351,7 @@ function mapPreviewUri(mapName: string): string {
 
 function getMapIconSrc(mapName: string): string {
   const key = normalizeMapKey(mapName);
-  return MAP_ICON_BY_KEY[key] || mapPreviewUri(mapName);
+  return ROOT_MAP_ICON_BY_KEY[key] || MAP_ICON_BY_KEY[key] || mapPreviewUri(mapName);
 }
 
 function getBestMapName(maps: MapStats[]): string | null {
