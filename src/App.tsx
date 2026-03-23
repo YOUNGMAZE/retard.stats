@@ -354,7 +354,7 @@ function getMapIconSrc(mapName: string): string {
   return ROOT_MAP_ICON_BY_KEY[key] || MAP_ICON_BY_KEY[key] || mapPreviewUri(mapName);
 }
 
-function getBestMapName(maps: MapStats[]): string | null {
+function getBestMap(maps: MapStats[]): MapStats | null {
   if (!maps.length) {
     return null;
   }
@@ -375,7 +375,7 @@ function getBestMapName(maps: MapStats[]): string | null {
     return currentBest;
   }, maps[0]);
 
-  return best.map;
+  return best;
 }
 
 function LevelIcon({ level, className = "h-12 w-12" }: { level: number; className?: string }) {
@@ -1182,7 +1182,8 @@ export default function App() {
         ) : (
           <ul className={listClassName}>
             {visiblePlayers.map((player) => {
-              const bestMapName = getBestMapName(player.maps);
+              const bestMap = getBestMap(player.maps);
+              const mapsSectionOpen = isMapsSectionOpen[player.playerId] ?? true;
               const faceitLevel = getFaceitLevel(player.elo);
 
               if (effectiveLayoutMode === "mini") {
@@ -1277,11 +1278,11 @@ export default function App() {
                         onClick={() => toggleMapsSection(player.playerId)}
                         className="border-b border-zinc-600 text-xs text-zinc-300 transition hover:border-zinc-300"
                       >
-                        {(isMapsSectionOpen[player.playerId] ?? true) ? "Свернуть" : "Развернуть"}
+                        {mapsSectionOpen ? "Свернуть" : "Развернуть"}
                       </button>
                     </div>
 
-                    {(isMapsSectionOpen[player.playerId] ?? true) ? (
+                    {mapsSectionOpen ? (
                       player.maps.length ? (
                         <div className={isMobileRowMode ? "grid grid-cols-1 gap-2" : "grid grid-cols-1 gap-3 sm:grid-cols-2"}>
                           {player.maps.map((entry, mapIndex) => {
@@ -1347,10 +1348,40 @@ export default function App() {
                       )
                     ) : null}
 
-                    {bestMapName ? (
-                      <p className="mt-2 text-yellow-300">
-                        best map: <b>{bestMapName}</b>
-                      </p>
+                    {!mapsSectionOpen && bestMap ? (
+                      <div className="mt-2 rounded-md border border-zinc-800/80 p-2">
+                        <p className="text-xs uppercase tracking-wide text-yellow-300">Лучшая карта</p>
+                        <div className="mt-2 mx-auto w-[168px] rounded-md border border-zinc-800/80 p-2">
+                          <span className="relative block aspect-[250/88] w-full overflow-hidden rounded-md border border-zinc-700/80 bg-zinc-900/70">
+                            <img
+                              src={getMapIconSrc(bestMap.map)}
+                              alt={`Карта ${bestMap.map}`}
+                              className="absolute inset-0 block h-full w-full max-w-full object-contain object-center"
+                              onError={(event) => {
+                                event.currentTarget.src = mapPreviewUri(bestMap.map);
+                              }}
+                            />
+                            <span className="absolute inset-0 flex items-center justify-end bg-black/30 pl-3 pr-2 text-right text-lg font-black uppercase tracking-wide text-zinc-100">
+                              {bestMap.map}
+                            </span>
+                          </span>
+
+                          <p className="mt-2 text-center text-xs">
+                            Матчи <b className="text-zinc-100">{bestMap.matches}</b>
+                            <span className="text-zinc-500"> | WR </span>
+                            <b className={bestMap.winRate < 50 ? "text-rose-400" : "text-emerald-300"}>{formatStatNumber(bestMap.winRate, 1)}%</b>
+                          </p>
+                          <p className="mt-1 text-center text-xs text-zinc-300">
+                            W/L <b className="text-emerald-300">{bestMap.wins}</b>
+                            <span className="text-zinc-500">/</span>
+                            <b className="text-rose-300">{bestMap.losses}</b>
+                            <span className="text-zinc-500"> | </span>
+                            K/D <b className="text-zinc-100">{formatStatNumber(bestMap.kd)}</b>
+                            <span className="text-zinc-500"> | </span>
+                            AVG <b className="text-zinc-100">{formatStatNumber(bestMap.avgKills, 1)}</b>
+                          </p>
+                        </div>
+                      </div>
                     ) : null}
                   </div>
                 </li>
