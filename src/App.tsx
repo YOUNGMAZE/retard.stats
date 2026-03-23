@@ -947,12 +947,18 @@ export default function App() {
     setSelectedNicknames((previous) => previous.filter((item) => item.toLowerCase() !== nickname.toLowerCase()));
   }, []);
 
-  const toggleMapPanel = useCallback((playerId: string, mapName: string) => {
-    const key = `${playerId}:${mapName}`;
-    setExpandedMaps((previous) => ({
-      ...previous,
-      [key]: !previous[key],
-    }));
+  const toggleMapPanel = useCallback((playerId: string, panelKey: string) => {
+    setExpandedMaps((previous) => {
+      const next: Record<string, boolean> = {};
+      for (const [key, value] of Object.entries(previous)) {
+        if (!key.startsWith(`${playerId}:`)) {
+          next[key] = value;
+        }
+      }
+
+      next[panelKey] = !previous[panelKey];
+      return next;
+    });
   }, []);
 
   if (isAuthChecking) {
@@ -1252,15 +1258,15 @@ export default function App() {
                     {player.maps.length ? (
                       <>
                         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                          {player.maps.map((entry) => {
-                            const mapKey = `${player.playerId}:${entry.map}`;
+                          {player.maps.map((entry, mapIndex) => {
+                            const mapKey = `${player.playerId}:${normalizeMapKey(entry.map)}:${mapIndex}`;
                             const expanded = Boolean(expandedMaps[mapKey]);
                             const mapLabelRightPaddingClass = normalizeMapKey(entry.map) === "overpass" ? "pr-0.5" : "pr-2";
                             return (
                               <div key={mapKey} className="mx-auto w-[168px] rounded-md border border-zinc-800/80 p-2">
                                 <button
                                   type="button"
-                                  onClick={() => toggleMapPanel(player.playerId, entry.map)}
+                                  onClick={() => toggleMapPanel(player.playerId, mapKey)}
                                   className="group block w-full overflow-hidden rounded-md border border-zinc-700/80 bg-zinc-900/70"
                                 >
                                   <span className="relative block aspect-[250/88] w-full overflow-hidden rounded-md bg-zinc-900">
