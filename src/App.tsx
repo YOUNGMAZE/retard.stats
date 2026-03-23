@@ -1272,7 +1272,7 @@ export default function App() {
                                         event.currentTarget.src = mapPreviewUri(entry.map);
                                       }}
                                     />
-                                    <span className="absolute inset-0 flex items-center justify-center bg-black/30 px-2 text-center text-lg font-black uppercase tracking-wide text-zinc-100">
+                                    <span className="absolute inset-0 flex items-center justify-end bg-black/30 px-3 text-right text-lg font-black uppercase tracking-wide text-zinc-100">
                                       {entry.map}
                                     </span>
                                   </span>
