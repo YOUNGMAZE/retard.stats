@@ -10,6 +10,8 @@ const DEFAULT_STATS_API_URL = "https://retard-stats-api.wladjika25.workers.dev";
 const STATS_API_URL = (import.meta.env.VITE_STATS_API_URL || DEFAULT_STATS_API_URL).trim().replace(/\/+$/, "");
 const DEFAULT_PLAYERS = ["mazedaddy", "SEXN", "unborrasq"];
 const MAX_SELECTED_PLAYERS = 8;
+const PLAYER_REMOVE_ANIMATION_MS = 260;
+const PLAYER_ADD_ANIMATION_MS = 420;
 
 type LayoutMode = "row" | "mini";
 
@@ -109,6 +111,10 @@ type AuthUsersResponse = {
 
 function buildFaceitProfileUrl(nickname: string): string {
   return `https://www.faceit.com/ru/players/${encodeURIComponent(nickname)}`;
+}
+
+function nicknameKey(nickname: string): string {
+  return nickname.trim().toLowerCase();
 }
 
 function parseSafeNumber(value: unknown, fallback = 0): number {
@@ -465,13 +471,20 @@ export default function App() {
   const [isUsersLoading, setIsUsersLoading] = useState(false);
   const [usersError, setUsersError] = useState<string | null>(null);
   const [isUsersPanelOpen, setIsUsersPanelOpen] = useState(true);
+  const [removingNicknames, setRemovingNicknames] = useState<Record<string, boolean>>({});
+  const [newlyAddedNicknames, setNewlyAddedNicknames] = useState<Record<string, boolean>>({});
   const playersRef = useRef<PlayerViewModel[]>([]);
+  const selectedNicknamesRef = useRef<string[]>(DEFAULT_PLAYERS);
   const hasSavedLayoutRef = useRef(false);
   const isAdminUser = useMemo(() => String(authUsername ?? "").trim().toLowerCase() === ADMIN_USERNAME_NORMALIZED, [authUsername]);
 
   useEffect(() => {
     playersRef.current = players;
   }, [players]);
+
+  useEffect(() => {
+    selectedNicknamesRef.current = selectedNicknames;
+  }, [selectedNicknames]);
 
   useEffect(() => {
     const media = window.matchMedia("(max-width: 767px)");
@@ -744,14 +757,19 @@ export default function App() {
     localStorage.setItem(LOCAL_PLAYERS_KEY, JSON.stringify(selectedNicknames));
   }, [selectedNicknames]);
 
-  const loadStats = useCallback(async () => {
+  const loadStats = useCallback(async (overrideNicknames?: string[]) => {
+    const targetNicknames =
+      overrideNicknames && overrideNicknames.length
+        ? overrideNicknames
+        : selectedNicknames;
+
     if (!STATS_API_URL) {
       setErrorText("Не указан server-side API URL");
       setIsInitialLoading(false);
       return;
     }
 
-    if (!selectedNicknames.length) {
+    if (!targetNicknames.length) {
       setPlayers([]);
       setErrorText("Добавь хотя бы одного игрока для отслеживания.");
       setIsInitialLoading(false);
@@ -769,7 +787,7 @@ export default function App() {
 
     try {
       const settled = await Promise.allSettled(
-        selectedNicknames.map(async (nickname) => {
+        targetNicknames.map(async (nickname) => {
           const response = await fetch(`${STATS_API_URL}/api/player-stats?nickname=${encodeURIComponent(nickname)}`, {
             headers: {
               Accept: "application/json",
@@ -807,7 +825,7 @@ export default function App() {
         }
       }
 
-      const orderedPlayers = selectedNicknames
+      const orderedPlayers = targetNicknames
         .map((nickname) => loadedPlayers.find((player) => player.nickname.toLowerCase() === nickname.toLowerCase()) ?? null)
         .filter((item): item is PlayerViewModel => item !== null);
 
@@ -941,18 +959,86 @@ export default function App() {
       return;
     }
 
+    const nextKey = nicknameKey(trimmed);
+    let nextNicknames: string[] | null = null;
+
     setSelectedNicknames((previous) => {
       const exists = previous.some((item) => item.toLowerCase() === trimmed.toLowerCase());
       if (exists || previous.length >= MAX_SELECTED_PLAYERS) {
         return previous;
       }
-      return [...previous, trimmed];
+      nextNicknames = [...previous, trimmed];
+      return nextNicknames;
     });
-  }, []);
+
+    if (!nextNicknames) {
+      return;
+    }
+
+    setRemovingNicknames((previous) => {
+      if (!previous[nextKey]) {
+        return previous;
+      }
+      const next = { ...previous };
+      delete next[nextKey];
+      return next;
+    });
+
+    setNewlyAddedNicknames((previous) => ({
+      ...previous,
+      [nextKey]: true,
+    }));
+
+    window.setTimeout(() => {
+      setNewlyAddedNicknames((previous) => {
+        if (!previous[nextKey]) {
+          return previous;
+        }
+        const next = { ...previous };
+        delete next[nextKey];
+        return next;
+      });
+    }, PLAYER_ADD_ANIMATION_MS);
+
+    // Refresh immediately when the player list changes.
+    void loadStats(nextNicknames);
+  }, [loadStats]);
 
   const removePlayer = useCallback((nickname: string) => {
-    setSelectedNicknames((previous) => previous.filter((item) => item.toLowerCase() !== nickname.toLowerCase()));
-  }, []);
+    const key = nicknameKey(nickname);
+    if (removingNicknames[key]) {
+      return;
+    }
+
+    setRemovingNicknames((previous) => ({
+      ...previous,
+      [key]: true,
+    }));
+
+    window.setTimeout(() => {
+      const updatedNicknames = selectedNicknamesRef.current.filter((item) => nicknameKey(item) !== key);
+      setSelectedNicknames(updatedNicknames);
+      selectedNicknamesRef.current = updatedNicknames;
+
+      setRemovingNicknames((previous) => {
+        const next = { ...previous };
+        delete next[key];
+        return next;
+      });
+
+      setNewlyAddedNicknames((previous) => {
+        if (!previous[key]) {
+          return previous;
+        }
+        const next = { ...previous };
+        delete next[key];
+        return next;
+      });
+
+      // Refresh immediately when the player list changes.
+      void loadStats(updatedNicknames);
+    }, PLAYER_REMOVE_ANIMATION_MS);
+  }, [loadStats, removingNicknames]);
 
   const toggleMapPanel = useCallback((_playerId: string, panelKey: string) => {
     setExpandedMaps((previous) => {
@@ -1103,9 +1189,24 @@ export default function App() {
             <p className="text-sm text-zinc-400">Игроки</p>
             <div className="flex flex-wrap gap-2">
               {selectedNicknames.map((nickname) => (
-                <span key={nickname} className="inline-flex items-center gap-2 rounded-md border border-zinc-700 bg-zinc-900/80 px-2.5 py-1 text-sm">
+                <span
+                  key={nickname}
+                  className={`inline-flex items-center gap-2 rounded-md border border-zinc-700 bg-zinc-900/80 px-2.5 py-1 text-sm ${
+                    removingNicknames[nicknameKey(nickname)]
+                      ? "player-chip-removing"
+                      : newlyAddedNicknames[nicknameKey(nickname)]
+                        ? "player-chip-entering"
+                        : ""
+                  }`}
+                >
                   {nickname}
-                  <button type="button" onClick={() => removePlayer(nickname)} className="text-zinc-500 transition hover:text-zinc-200" aria-label={`Удалить ${nickname}`}>
+                  <button
+                    type="button"
+                    onClick={() => removePlayer(nickname)}
+                    className="text-zinc-500 transition hover:text-zinc-200 disabled:cursor-not-allowed disabled:opacity-50"
+                    aria-label={`Удалить ${nickname}`}
+                    disabled={Boolean(removingNicknames[nicknameKey(nickname)])}
+                  >
                     ×
                   </button>
                 </span>
@@ -1182,6 +1283,12 @@ export default function App() {
         ) : (
           <ul className={listClassName}>
             {visiblePlayers.map((player) => {
+              const playerNicknameKey = nicknameKey(player.nickname);
+              const playerAnimationClass = removingNicknames[playerNicknameKey]
+                ? "player-item-removing"
+                : newlyAddedNicknames[playerNicknameKey]
+                  ? "player-item-entering"
+                  : "fade-in";
               const bestMap = getBestMap(player.maps);
               const mapsSectionOpen = isMapsSectionOpen[player.playerId] ?? true;
               const collapsedBestMapPanelKey = `${player.playerId}:best-map-collapsed`;
@@ -1190,7 +1297,7 @@ export default function App() {
 
               if (effectiveLayoutMode === "mini") {
                 return (
-                  <li key={player.playerId} className="fade-in rounded-lg border border-zinc-800/80 bg-zinc-900/40 p-3">
+                  <li key={player.playerId} className={`${playerAnimationClass} rounded-lg border border-zinc-800/80 bg-zinc-900/40 p-3`}>
                     <div className="flex items-center justify-between gap-3">
                       <a href={player.faceitUrl} target="_blank" rel="noreferrer" className="text-lg font-semibold transition hover:text-orange-300">
                         {player.nickname}
@@ -1209,11 +1316,11 @@ export default function App() {
               return (
                 <li
                   key={player.playerId}
-                  className={`fade-in ${
+                  className={`${
                     effectiveLayoutMode === "row"
                       ? `rounded-lg border border-zinc-800/80 bg-zinc-900/40 p-4 ${isSingleRowLayout ? "md:mx-auto md:max-w-4xl" : ""}`
                       : "py-6 sm:py-8"
-                  }`}
+                  } ${playerAnimationClass}`}
                 >
                   <div className="mb-4 flex items-center justify-between gap-3">
                     <div className="flex items-center gap-4">
