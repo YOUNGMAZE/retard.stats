@@ -1255,6 +1255,7 @@ export default function App() {
                           {player.maps.map((entry) => {
                             const mapKey = `${player.playerId}:${entry.map}`;
                             const expanded = Boolean(expandedMaps[mapKey]);
+                            const mapLabelRightPaddingClass = normalizeMapKey(entry.map) === "overpass" ? "pr-0.5" : "pr-2";
                             return (
                               <div key={mapKey} className="mx-auto w-[168px] rounded-md border border-zinc-800/80 p-2">
                                 <button
@@ -1272,7 +1273,7 @@ export default function App() {
                                         event.currentTarget.src = mapPreviewUri(entry.map);
                                       }}
                                     />
-                                    <span className="absolute inset-0 flex items-center justify-end bg-black/30 px-3 text-right text-lg font-black uppercase tracking-wide text-zinc-100">
+                                    <span className={`absolute inset-0 flex items-center justify-end bg-black/30 pl-3 text-right text-lg font-black uppercase tracking-wide text-zinc-100 ${mapLabelRightPaddingClass}`}>
                                       {entry.map}
                                     </span>
                                   </span>
