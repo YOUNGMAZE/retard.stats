@@ -1267,9 +1267,9 @@ export default function App() {
                                 <button
                                   type="button"
                                   onClick={() => toggleMapPanel(player.playerId, entry.map)}
-                                  className="group mt-2 block w-full overflow-hidden rounded-lg border border-zinc-700/70 bg-zinc-900/60"
+                                  className="group mt-2 mx-auto block w-fit overflow-hidden rounded-md border border-zinc-700/80 bg-zinc-900/70 p-1"
                                 >
-                                  <span className="relative mx-auto block aspect-[250/88] w-[90%] overflow-hidden bg-zinc-900">
+                                  <span className="relative block aspect-[250/88] w-[84px] overflow-hidden rounded-sm bg-zinc-900">
                                     <img
                                       src={getMapIconSrc(entry.map)}
                                       alt={`Карта ${entry.map}`}
