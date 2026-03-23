@@ -394,6 +394,7 @@ export default function App() {
   const [players, setPlayers] = useState<PlayerViewModel[]>([]);
   const [selectedNicknames, setSelectedNicknames] = useState<string[]>(DEFAULT_PLAYERS);
   const [layoutMode, setLayoutMode] = useState<LayoutMode>("column");
+  const [isMobileDevice, setIsMobileDevice] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
@@ -416,11 +417,30 @@ export default function App() {
   const [usersError, setUsersError] = useState<string | null>(null);
   const [isUsersPanelOpen, setIsUsersPanelOpen] = useState(true);
   const playersRef = useRef<PlayerViewModel[]>([]);
+  const hasSavedLayoutRef = useRef(false);
   const isAdminUser = useMemo(() => String(authUsername ?? "").trim().toLowerCase() === ADMIN_USERNAME_NORMALIZED, [authUsername]);
 
   useEffect(() => {
     playersRef.current = players;
   }, [players]);
+
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 767px)");
+    const detectMobile = () => {
+      const userAgent = navigator.userAgent.toLowerCase();
+      const uaMobile = /android|iphone|ipad|ipod|mobile|blackberry|iemobile|opera mini/.test(userAgent);
+      setIsMobileDevice(media.matches || uaMobile);
+    };
+
+    detectMobile();
+    media.addEventListener("change", detectMobile);
+    window.addEventListener("orientationchange", detectMobile);
+
+    return () => {
+      media.removeEventListener("change", detectMobile);
+      window.removeEventListener("orientationchange", detectMobile);
+    };
+  }, []);
 
   useEffect(() => {
     if (!authToken) {
@@ -618,6 +638,7 @@ export default function App() {
       const rawLayout = localStorage.getItem(LOCAL_LAYOUT_KEY);
       if (rawLayout === "row" || rawLayout === "column" || rawLayout === "mini") {
         setLayoutMode(rawLayout);
+        hasSavedLayoutRef.current = true;
       }
 
       const rawPlayers = localStorage.getItem(LOCAL_PLAYERS_KEY);
@@ -659,6 +680,12 @@ export default function App() {
       // Ignore broken local state values.
     }
   }, []);
+
+  useEffect(() => {
+    if (!hasSavedLayoutRef.current && isMobileDevice) {
+      setLayoutMode("mini");
+    }
+  }, [isMobileDevice]);
 
   useEffect(() => {
     localStorage.setItem(LOCAL_LAYOUT_KEY, layoutMode);
@@ -834,15 +861,22 @@ export default function App() {
     return Math.ceil(remainder / 1000);
   }, [nowTick, updatedAt]);
 
+  const effectiveLayoutMode = useMemo<LayoutMode>(() => {
+    if (isMobileDevice && layoutMode === "row") {
+      return "column";
+    }
+    return layoutMode;
+  }, [isMobileDevice, layoutMode]);
+
   const listClassName = useMemo(() => {
-    if (layoutMode === "row") {
+    if (effectiveLayoutMode === "row") {
       return "grid grid-cols-1 gap-8 md:grid-cols-2";
     }
-    if (layoutMode === "mini") {
+    if (effectiveLayoutMode === "mini") {
       return "space-y-3";
     }
     return "divide-y divide-zinc-800/80 border-y border-zinc-800/80";
-  }, [layoutMode]);
+  }, [effectiveLayoutMode]);
 
   const visiblePlayers = useMemo(() => {
     const byNickname = new Map(players.map((player) => [player.nickname.toLowerCase(), player]));
@@ -940,16 +974,16 @@ export default function App() {
   }
 
   return (
-    <main className="relative min-h-screen overflow-hidden bg-zinc-950 px-6 py-8 text-zinc-100 sm:py-12">
+    <main className="relative min-h-screen overflow-hidden bg-zinc-950 px-3 py-5 text-zinc-100 sm:px-6 sm:py-12">
       <div className="hero-ambient pointer-events-none absolute inset-0" />
 
       <div className="relative mx-auto flex w-full max-w-6xl flex-col gap-8">
         <header className="space-y-4">
           <h1 className="text-4xl font-black tracking-tight sm:text-6xl">RETARD STATS</h1>
-          <p className="max-w-3xl text-zinc-300 sm:text-lg">Live FACEIT-статистика с автообновлением каждые 60 секунд.</p>
 
           <div className="flex flex-wrap items-center gap-3 text-sm text-zinc-400">
             <span className="text-zinc-300">Аккаунт: {authUsername}</span>
+            <span>{isMobileDevice ? "Устройство: телефон" : "Устройство: ПК"}</span>
             <button type="button" onClick={() => void logout()} className="border-b border-zinc-500 text-zinc-100 transition hover:border-zinc-100">
               Выйти
             </button>
@@ -1072,7 +1106,7 @@ export default function App() {
                   key={mode}
                   type="button"
                   onClick={() => setLayoutMode(mode)}
-                  className={`rounded px-3 py-1 transition ${layoutMode === mode ? "bg-zinc-100 text-zinc-900" : "text-zinc-300 hover:bg-zinc-800"}`}
+                  className={`rounded px-3 py-1 transition ${effectiveLayoutMode === mode ? "bg-zinc-100 text-zinc-900" : "text-zinc-300 hover:bg-zinc-800"}`}
                 >
                   {label}
                 </button>
@@ -1094,7 +1128,7 @@ export default function App() {
               const bestMapName = getBestMapName(player.maps);
               const faceitLevel = getFaceitLevel(player.elo);
 
-              if (layoutMode === "mini") {
+              if (effectiveLayoutMode === "mini") {
                 return (
                   <li key={player.playerId} className="fade-in rounded-lg border border-zinc-800/80 bg-zinc-900/40 p-3">
                     <div className="flex items-center justify-between gap-3">
@@ -1113,7 +1147,7 @@ export default function App() {
               }
 
               return (
-                <li key={player.playerId} className={`fade-in ${layoutMode === "row" ? "rounded-lg border border-zinc-800/80 bg-zinc-900/40 p-4" : "py-6 sm:py-8"}`}>
+                <li key={player.playerId} className={`fade-in ${effectiveLayoutMode === "row" ? "rounded-lg border border-zinc-800/80 bg-zinc-900/40 p-4" : "py-6 sm:py-8"}`}>
                   <div className="mb-4 flex items-center justify-between gap-3">
                     <div className="flex items-center gap-4">
                       <img src={player.avatar} alt={player.nickname} className="h-14 w-14 rounded-full border border-zinc-700 object-cover" />
