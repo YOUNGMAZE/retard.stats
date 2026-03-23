@@ -292,17 +292,23 @@ function hashString(input: string): number {
   return Math.abs(hash);
 }
 
+function withBase(path: string): string {
+  const base = import.meta.env.BASE_URL || "/";
+  const normalizedBase = base.endsWith("/") ? base : `${base}/`;
+  return `${normalizedBase}${path.replace(/^\//, "")}`;
+}
+
 const MAP_ICON_BY_KEY: Record<string, string> = {
-  mirage: "/maps/mirage.jpg",
-  inferno: "/maps/inferno.jpg",
-  dust2: "/maps/dust2.jpg",
-  nuke: "/maps/nuke.jpg",
-  ancient: "/maps/ancient.jpg",
-  anubis: "/maps/anubis.jpg",
-  vertigo: "/maps/vertigo.jpg",
-  train: "/maps/train.jpg",
-  overpass: "/maps/overpass.jpg",
-  cache: "/maps/cache.jpg",
+  mirage: withBase("maps/mirage.jpg"),
+  inferno: withBase("maps/inferno.jpg"),
+  dust2: withBase("maps/dust2.jpg"),
+  nuke: withBase("maps/nuke.jpg"),
+  ancient: withBase("maps/ancient.jpg"),
+  anubis: withBase("maps/anubis.jpg"),
+  vertigo: withBase("maps/vertigo.jpg"),
+  train: withBase("maps/train.jpg"),
+  overpass: withBase("maps/overpass.jpg"),
+  cache: withBase("maps/cache.jpg"),
 };
 
 function normalizeMapKey(mapName: string): string {
@@ -1248,7 +1254,15 @@ export default function App() {
                                   onClick={() => toggleMapPanel(player.playerId, entry.map)}
                                   className="mt-2 block w-full overflow-hidden rounded-md border border-zinc-700/70"
                                 >
-                                  <img src={getMapIconSrc(entry.map)} alt={`Карта ${entry.map}`} className="h-20 w-full object-cover transition duration-300 hover:scale-[1.03]" />
+                                  <img
+                                    src={getMapIconSrc(entry.map)}
+                                    alt={`Карта ${entry.map}`}
+                                    className="h-20 w-full object-cover transition duration-300 hover:scale-[1.03]"
+                                    onError={(event) => {
+                                      // If a custom map file is missing, keep UI stable with an inline fallback image.
+                                      event.currentTarget.src = mapPreviewUri(entry.map);
+                                    }}
+                                  />
                                 </button>
                                 <p className="mt-2 text-xs">
                                   Матчи <b className="text-zinc-100">{entry.matches}</b>
