@@ -85,6 +85,17 @@ type AuthResponse = {
   error?: string;
 };
 
+type RegisteredUser = {
+  username: string;
+  createdAtIso: string;
+};
+
+type AuthUsersResponse = {
+  count?: number;
+  users?: RegisteredUser[];
+  error?: string;
+};
+
 function buildFaceitProfileUrl(nickname: string): string {
   return `https://www.faceit.com/ru/players/${encodeURIComponent(nickname)}`;
 }
@@ -347,6 +358,9 @@ export default function App() {
   const [loginInput, setLoginInput] = useState("");
   const [passwordInput, setPasswordInput] = useState("");
   const [isAuthSubmitting, setIsAuthSubmitting] = useState(false);
+  const [registeredUsers, setRegisteredUsers] = useState<RegisteredUser[]>([]);
+  const [isUsersLoading, setIsUsersLoading] = useState(false);
+  const [usersError, setUsersError] = useState<string | null>(null);
   const playersRef = useRef<PlayerViewModel[]>([]);
 
   useEffect(() => {
@@ -489,8 +503,60 @@ export default function App() {
     setAuthToken("");
     setAuthUsername(null);
     setPlayers([]);
+    setRegisteredUsers([]);
+    setUsersError(null);
     localStorage.removeItem(LOCAL_AUTH_TOKEN_KEY);
   }, [authToken]);
+
+  const loadRegisteredUsers = useCallback(async () => {
+    if (!authToken) {
+      setRegisteredUsers([]);
+      setUsersError(null);
+      return;
+    }
+
+    setIsUsersLoading(true);
+    setUsersError(null);
+
+    try {
+      const response = await fetch(`${STATS_API_URL}/api/auth/users`, {
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${authToken}`,
+        },
+      });
+
+      const payload = (await response.json()) as AuthUsersResponse;
+      if (!response.ok) {
+        throw new Error(payload.error || `Ошибка API: ${response.status}`);
+      }
+
+      const normalizedUsers = Array.isArray(payload.users)
+        ? payload.users
+            .map((entry) => ({
+              username: String(entry.username ?? "").trim(),
+              createdAtIso: String(entry.createdAtIso ?? "").trim(),
+            }))
+            .filter((entry) => entry.username && entry.createdAtIso)
+        : [];
+
+      setRegisteredUsers(normalizedUsers);
+    } catch (error) {
+      setUsersError(error instanceof Error ? error.message : "Не удалось загрузить список пользователей");
+    } finally {
+      setIsUsersLoading(false);
+    }
+  }, [authToken]);
+
+  useEffect(() => {
+    if (!authUsername) {
+      setRegisteredUsers([]);
+      setUsersError(null);
+      return;
+    }
+
+    void loadRegisteredUsers();
+  }, [authUsername, loadRegisteredUsers]);
 
   useEffect(() => {
     try {
@@ -832,6 +898,9 @@ export default function App() {
             <button type="button" onClick={() => void logout()} className="border-b border-zinc-500 text-zinc-100 transition hover:border-zinc-100">
               Выйти
             </button>
+            <button type="button" onClick={() => void loadRegisteredUsers()} className="border-b border-zinc-500 text-zinc-100 transition hover:border-zinc-100">
+              Обновить пользователей
+            </button>
             <span className="inline-flex items-center gap-2">
               <span className={`h-2.5 w-2.5 rounded-full ${isRefreshing ? "bg-emerald-400 pulse-dot" : "bg-zinc-500"}`} />
               {isRefreshing ? "Обновление..." : "Данные актуальны"}
@@ -843,6 +912,25 @@ export default function App() {
           </div>
 
           {updatedAt ? <p className="text-xs text-zinc-500">Последнее обновление: {updatedAt.toLocaleString("ru-RU")}</p> : null}
+
+          <div className="rounded-md border border-zinc-800/80 bg-zinc-900/40 p-3 text-sm">
+            <p>
+              Пользователей зарегистрировано: <b className="text-zinc-100">{registeredUsers.length}</b>
+            </p>
+            {isUsersLoading ? <p className="mt-1 text-zinc-500">Загрузка списка пользователей...</p> : null}
+            {usersError ? <p className="mt-1 text-rose-300">{usersError}</p> : null}
+            {registeredUsers.length ? (
+              <div className="mt-2 grid gap-1 text-zinc-300 sm:grid-cols-2">
+                {registeredUsers.map((entry) => (
+                  <p key={`${entry.username}:${entry.createdAtIso}`}>
+                    <b className="text-zinc-100">{entry.username}</b>
+                    <span className="text-zinc-500"> - </span>
+                    {new Date(entry.createdAtIso).toLocaleString("ru-RU")}
+                  </p>
+                ))}
+              </div>
+            ) : null}
+          </div>
         </header>
 
         <section className="grid gap-4 sm:grid-cols-[1fr_auto] sm:items-end">

@@ -150,6 +150,11 @@ type Env = {
     get: (key: string) => Promise<string | null>;
     put: (key: string, value: string, options?: { expirationTtl?: number }) => Promise<void>;
     delete: (key: string) => Promise<void>;
+    list?: (options?: { prefix?: string; cursor?: string; limit?: number }) => Promise<{
+      keys: Array<{ name: string }>;
+      list_complete: boolean;
+      cursor?: string;
+    }>;
   };
 };
 
@@ -499,6 +504,50 @@ async function logoutUser(request: Request, env: Env): Promise<Response> {
     await deleteAuthSession(tokenHash, env);
   }
   return json({ ok: true });
+}
+
+async function listAuthUsers(env: Env): Promise<Array<{ username: string; createdAtIso: string }>> {
+  if (env.AUTH_STORE?.list) {
+    const collected: AuthUserRecord[] = [];
+    let cursor: string | undefined;
+
+    do {
+      const page = await env.AUTH_STORE.list({
+        prefix: "user:",
+        cursor,
+        limit: 1000,
+      });
+
+      for (const key of page.keys) {
+        const raw = await env.AUTH_STORE.get(key.name);
+        if (!raw) {
+          continue;
+        }
+
+        try {
+          const parsed = JSON.parse(raw) as AuthUserRecord;
+          if (parsed.username && parsed.createdAtIso) {
+            collected.push(parsed);
+          }
+        } catch {
+          // Ignore malformed user record.
+        }
+      }
+
+      cursor = page.cursor;
+      if (page.list_complete) {
+        break;
+      }
+    } while (cursor);
+
+    return collected
+      .map((entry) => ({ username: entry.username, createdAtIso: entry.createdAtIso }))
+      .sort((a, b) => (a.createdAtIso < b.createdAtIso ? 1 : -1));
+  }
+
+  return [...memoryUsers.values()]
+    .map((entry) => ({ username: entry.username, createdAtIso: entry.createdAtIso }))
+    .sort((a, b) => (a.createdAtIso < b.createdAtIso ? 1 : -1));
 }
 
 function parsePercent(value: unknown): number {
@@ -1160,6 +1209,7 @@ export default {
         "/api/auth/login",
         "/api/auth/me",
         "/api/auth/logout",
+        "/api/auth/users",
       ]);
       if (!validPaths.has(url.pathname)) {
         return json({ error: "Not Found" }, { status: 404, headers });
@@ -1201,6 +1251,19 @@ export default {
       if (url.pathname === "/api/auth/logout") {
         const response = await logoutUser(request, env);
         return new Response(response.body, { status: response.status, headers: { ...headers, "content-type": "application/json; charset=utf-8" } });
+      }
+
+      if (url.pathname === "/api/auth/users") {
+        if (request.method !== "GET") {
+          return json({ error: "Method Not Allowed" }, { status: 405, headers });
+        }
+        const session = await requireAuth(request, env);
+        if (!session) {
+          return json({ error: "Unauthorized" }, { status: 401, headers });
+        }
+
+        const users = await listAuthUsers(env);
+        return json({ count: users.length, users }, { headers });
       }
 
       const session = await requireAuth(request, env);
