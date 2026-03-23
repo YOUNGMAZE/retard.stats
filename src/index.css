@@ -111,3 +111,45 @@
   animation: chipExit 0.24s ease-in forwards;
   pointer-events: none;
 }
+
+.ui-action {
+  transition:
+    transform 180ms ease,
+    border-color 180ms ease,
+    background-color 180ms ease,
+    color 180ms ease,
+    opacity 180ms ease;
+}
+
+.ui-action:hover {
+  transform: translateY(-1px);
+}
+
+.ui-action:active {
+  transform: translateY(0) scale(0.98);
+}
+
+.fade-in-soft {
+  animation: fadeIn 0.3s ease-out;
+}
+
+.collapse-area {
+  display: grid;
+  transition: grid-template-rows 260ms ease, opacity 260ms ease;
+}
+
+.collapse-area.is-open {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.collapse-area.is-closed {
+  grid-template-rows: 0fr;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.collapse-inner {
+  overflow: hidden;
+}

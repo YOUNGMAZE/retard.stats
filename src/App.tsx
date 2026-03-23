@@ -1079,7 +1079,7 @@ export default function App() {
                 key={mode}
                 type="button"
                 onClick={() => setAuthMode(mode)}
-                className={`rounded px-3 py-1 transition ${authMode === mode ? "bg-zinc-100 text-zinc-900" : "text-zinc-300 hover:bg-zinc-800"}`}
+                className={`ui-action rounded px-3 py-1 transition ${authMode === mode ? "bg-zinc-100 text-zinc-900" : "text-zinc-300 hover:bg-zinc-800"}`}
               >
                 {label}
               </button>
@@ -1106,7 +1106,7 @@ export default function App() {
               type="button"
               onClick={() => void submitAuth()}
               disabled={isAuthSubmitting}
-              className="w-full rounded-md bg-zinc-100 px-3 py-2 text-sm font-semibold text-zinc-900 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
+              className="ui-action w-full rounded-md bg-zinc-100 px-3 py-2 text-sm font-semibold text-zinc-900 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
             >
               {isAuthSubmitting ? "Подожди..." : authMode === "register" ? "Зарегистрироваться" : "Войти"}
             </button>
@@ -1128,11 +1128,11 @@ export default function App() {
           <div className="flex flex-wrap items-center gap-3 text-sm text-zinc-400">
             <span className="text-zinc-300">Аккаунт: {authUsername}</span>
             <span>{isMobileDevice ? "Устройство: телефон" : "Устройство: ПК"}</span>
-            <button type="button" onClick={() => void logout()} className="border-b border-zinc-500 text-zinc-100 transition hover:border-zinc-100">
+            <button type="button" onClick={() => void logout()} className="ui-action border-b border-zinc-500 text-zinc-100 transition hover:border-zinc-100">
               Выйти
             </button>
             {isAdminUser ? (
-              <button type="button" onClick={() => void loadRegisteredUsers()} className="border-b border-zinc-500 text-zinc-100 transition hover:border-zinc-100">
+              <button type="button" onClick={() => void loadRegisteredUsers()} className="ui-action border-b border-zinc-500 text-zinc-100 transition hover:border-zinc-100">
                 Обновить пользователей
               </button>
             ) : null}
@@ -1141,7 +1141,7 @@ export default function App() {
               {isRefreshing ? "Обновление..." : "Данные актуальны"}
             </span>
             <span>Следующее обновление через {secondsToNextRefresh}с</span>
-            <button type="button" onClick={() => void loadStats()} className="border-b border-zinc-500 text-zinc-100 transition hover:border-zinc-100">
+            <button type="button" onClick={() => void loadStats()} className="ui-action border-b border-zinc-500 text-zinc-100 transition hover:border-zinc-100">
               Обновить сейчас
             </button>
           </div>
@@ -1157,16 +1157,16 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => setIsUsersPanelOpen((prev) => !prev)}
-                  className="border-b border-zinc-500 text-zinc-200 transition hover:border-zinc-200"
+                  className="ui-action border-b border-zinc-500 text-zinc-200 transition hover:border-zinc-200"
                 >
                   {isUsersPanelOpen ? "Свернуть" : "Развернуть"}
                 </button>
               </div>
 
-              {isUsersPanelOpen ? (
-                <>
-                  {isUsersLoading ? <p className="mt-1 text-zinc-500">Загрузка списка пользователей...</p> : null}
-                  {usersError ? <p className="mt-1 text-rose-300">{usersError}</p> : null}
+              <div className={`collapse-area mt-1 ${isUsersPanelOpen ? "is-open" : "is-closed"}`}>
+                <div className="collapse-inner">
+                  {isUsersLoading ? <p className="text-zinc-500">Загрузка списка пользователей...</p> : null}
+                  {usersError ? <p className="text-rose-300">{usersError}</p> : null}
                   {registeredUsers.length ? (
                     <div className="mt-2 grid gap-1 text-zinc-300 sm:grid-cols-2">
                       {registeredUsers.map((entry) => (
@@ -1178,8 +1178,8 @@ export default function App() {
                       ))}
                     </div>
                   ) : null}
-                </>
-              ) : null}
+                </div>
+              </div>
             </div>
           ) : null}
         </header>
@@ -1203,7 +1203,7 @@ export default function App() {
                   <button
                     type="button"
                     onClick={() => removePlayer(nickname)}
-                    className="text-zinc-500 transition hover:text-zinc-200 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="ui-action text-zinc-500 transition hover:text-zinc-200 disabled:cursor-not-allowed disabled:opacity-50"
                     aria-label={`Удалить ${nickname}`}
                     disabled={Boolean(removingNicknames[nicknameKey(nickname)])}
                   >
@@ -1226,8 +1226,12 @@ export default function App() {
                 placeholder="Ник, ссылка FACEIT или Steam"
                 className="w-full rounded-md border border-zinc-700 bg-zinc-900/80 px-3 py-2 text-sm outline-none transition focus:border-zinc-500"
               />
-              {searchResults.length > 0 ? (
-                <div className="absolute z-30 mt-1 w-full rounded-md border border-zinc-700 bg-zinc-900 shadow-lg">
+              <div
+                className={`collapse-area absolute z-30 mt-1 w-full rounded-md border border-zinc-700 bg-zinc-900 shadow-lg ${
+                  searchResults.length > 0 ? "is-open" : "is-closed"
+                }`}
+              >
+                <div className="collapse-inner">
                   {searchResults.map((result) => (
                     <button
                       key={result.nickname}
@@ -1237,7 +1241,7 @@ export default function App() {
                         setSearchQuery("");
                         setSearchResults([]);
                       }}
-                      className="flex w-full items-center justify-between px-3 py-2 text-left text-sm transition hover:bg-zinc-800"
+                      className="ui-action flex w-full items-center justify-between px-3 py-2 text-left text-sm transition hover:bg-zinc-800"
                     >
                       <span className="inline-flex items-center gap-2">
                         <img src={result.avatar} alt={result.nickname} className="h-5 w-5 rounded-full object-cover" />
@@ -1247,7 +1251,7 @@ export default function App() {
                     </button>
                   ))}
                 </div>
-              ) : null}
+              </div>
               <p className="mt-1 text-xs text-zinc-500">Поддержка: ник FACEIT, ссылка FACEIT, ссылка Steam.</p>
               {isSearching ? <p className="mt-1 text-xs text-zinc-500">Ищем игроков...</p> : null}
             </div>
@@ -1264,7 +1268,7 @@ export default function App() {
                   key={mode}
                   type="button"
                   onClick={() => setLayoutMode(mode)}
-                  className={`rounded px-3 py-1 transition ${effectiveLayoutMode === mode ? "bg-zinc-100 text-zinc-900" : "text-zinc-300 hover:bg-zinc-800"}`}
+                  className={`ui-action rounded px-3 py-1 transition ${effectiveLayoutMode === mode ? "bg-zinc-100 text-zinc-900" : "text-zinc-300 hover:bg-zinc-800"}`}
                 >
                   {label}
                 </button>
@@ -1273,7 +1277,7 @@ export default function App() {
           </div>
         </section>
 
-        {errorText ? <p className="text-sm text-rose-300">Ошибка загрузки: {errorText}</p> : null}
+        {errorText ? <p className="fade-in-soft text-sm text-rose-300">Ошибка загрузки: {errorText}</p> : null}
 
         {isInitialLoading ? (
           <div className="flex items-center gap-3 text-zinc-300">
@@ -1385,15 +1389,16 @@ export default function App() {
                       <button
                         type="button"
                         onClick={() => toggleMapsSection(player.playerId)}
-                        className="border-b border-zinc-600 text-xs text-zinc-300 transition hover:border-zinc-300"
+                        className="ui-action border-b border-zinc-600 text-xs text-zinc-300 transition hover:border-zinc-300"
                       >
                         {mapsSectionOpen ? "Свернуть" : "Развернуть"}
                       </button>
                     </div>
 
-                    {mapsSectionOpen ? (
-                      player.maps.length ? (
-                        <div className={isMobileRowMode ? "grid grid-cols-1 gap-2" : "grid grid-cols-1 gap-3 sm:grid-cols-2"}>
+                    <div className={`collapse-area ${mapsSectionOpen ? "is-open" : "is-closed"}`}>
+                      <div className="collapse-inner">
+                        {player.maps.length ? (
+                          <div className={isMobileRowMode ? "grid grid-cols-1 gap-2" : "grid grid-cols-1 gap-3 sm:grid-cols-2"}>
                           {player.maps.map((entry, mapIndex) => {
                             const mapKey = `${player.playerId}:${normalizeMapKey(entry.map)}:${mapIndex}`;
                             const expanded = Boolean(expandedMaps[mapKey]);
@@ -1410,7 +1415,7 @@ export default function App() {
                                 <button
                                   type="button"
                                   onClick={() => toggleMapPanel(player.playerId, mapKey)}
-                                  className="group block w-full overflow-hidden rounded-md border border-zinc-700/80 bg-zinc-900/70"
+                                  className="ui-action group block w-full overflow-hidden rounded-md border border-zinc-700/80 bg-zinc-900/70"
                                 >
                                   <span className="relative block aspect-[250/88] w-full overflow-hidden rounded-md bg-zinc-900">
                                     <img
@@ -1451,11 +1456,12 @@ export default function App() {
                               </div>
                             );
                           })}
-                        </div>
-                      ) : (
-                        <p className="text-zinc-500">Нет данных по картам.</p>
-                      )
-                    ) : null}
+                          </div>
+                        ) : (
+                          <p className="text-zinc-500">Нет данных по картам.</p>
+                        )}
+                      </div>
+                    </div>
 
                     {!mapsSectionOpen && bestMap ? (
                       <div className="mt-2 rounded-md border border-zinc-800/80 px-2 py-1.5">
