@@ -213,6 +213,14 @@ type SearchApiResponse = {
   items: Array<{ nickname: string; avatar: string; elo: number }>;
 };
 
+type NormalizedSearchInput = {
+  original: string;
+  query: string;
+  faceitNickname?: string;
+  steamId64?: string;
+  steamVanity?: string;
+};
+
 type FaceitPlayer = {
   player_id: string;
   nickname: string;
@@ -1725,21 +1733,143 @@ async function loadPlayerStats(nickname: string, env: Env): Promise<PlayerViewMo
   return payload;
 }
 
+function normalizeSearchInput(rawQuery: string): NormalizedSearchInput {
+  const original = String(rawQuery ?? "").trim();
+  const decoded = decodeURIComponentSafe(original);
+  const input = decoded || original;
+
+  const faceitMatch = input.match(/faceit\.com\/(?:[^/]+\/){0,3}players\/([^/?#]+)/i);
+  if (faceitMatch?.[1]) {
+    return {
+      original,
+      query: faceitMatch[1],
+      faceitNickname: faceitMatch[1],
+    };
+  }
+
+  const steamId64Match = input.match(/steamcommunity\.com\/profiles\/(\d{17})/i);
+  if (steamId64Match?.[1]) {
+    return {
+      original,
+      query: steamId64Match[1],
+      steamId64: steamId64Match[1],
+    };
+  }
+
+  const steamVanityMatch = input.match(/steamcommunity\.com\/id\/([^/?#]+)/i);
+  if (steamVanityMatch?.[1]) {
+    return {
+      original,
+      query: steamVanityMatch[1],
+      steamVanity: steamVanityMatch[1],
+    };
+  }
+
+  return {
+    original,
+    query: input,
+  };
+}
+
+function decodeURIComponentSafe(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function toSearchItem(player: FaceitPlayer): { nickname: string; avatar: string; elo: number } {
+  return {
+    nickname: String(player.nickname ?? "").trim(),
+    avatar: String(player.avatar ?? FALLBACK_AVATAR),
+    elo: parseNumber(player.games?.[GAME_ID]?.faceit_elo),
+  };
+}
+
+async function loadPlayerByNickname(nickname: string, env: Env): Promise<FaceitPlayer | null> {
+  const trimmed = String(nickname ?? "").trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  try {
+    return await faceitFetch<FaceitPlayer>(`/players?nickname=${encodeURIComponent(trimmed)}`, env, 1);
+  } catch {
+    return null;
+  }
+}
+
+async function loadPlayerBySteamId64(steamId64: string, env: Env): Promise<FaceitPlayer | null> {
+  const trimmed = String(steamId64 ?? "").trim();
+  if (!/^\d{17}$/.test(trimmed)) {
+    return null;
+  }
+
+  // FACEIT supports resolving a player by game account id (Steam64 for CS2).
+  try {
+    return await faceitFetch<FaceitPlayer>(`/players?game=${encodeURIComponent(GAME_ID)}&game_player_id=${encodeURIComponent(trimmed)}`, env, 1);
+  } catch {
+    return null;
+  }
+}
+
+function uniqueSearchItems(items: Array<{ nickname: string; avatar: string; elo: number }>): Array<{ nickname: string; avatar: string; elo: number }> {
+  const seen = new Set<string>();
+  const deduped: Array<{ nickname: string; avatar: string; elo: number }> = [];
+  for (const item of items) {
+    const key = item.nickname.toLowerCase();
+    if (!item.nickname || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    deduped.push(item);
+  }
+  return deduped;
+}
+
 async function searchPlayers(query: string, env: Env): Promise<SearchApiResponse> {
-  const trimmed = query.trim();
+  const normalized = normalizeSearchInput(query);
+  const trimmed = normalized.query.trim();
   if (trimmed.length < 2) {
     return { items: [] };
   }
 
+  const exactCandidates: Array<{ nickname: string; avatar: string; elo: number }> = [];
+
+  if (normalized.faceitNickname) {
+    const exactByFaceitLink = await loadPlayerByNickname(normalized.faceitNickname, env);
+    if (exactByFaceitLink) {
+      exactCandidates.push(toSearchItem(exactByFaceitLink));
+    }
+  }
+
+  if (normalized.steamId64) {
+    const exactBySteam = await loadPlayerBySteamId64(normalized.steamId64, env);
+    if (exactBySteam) {
+      exactCandidates.push(toSearchItem(exactBySteam));
+    }
+  }
+
+  // For a plain nickname or steam vanity URL token, try an exact nickname resolve first.
+  if (!normalized.steamId64) {
+    const exactByNickname = await loadPlayerByNickname(trimmed, env);
+    if (exactByNickname) {
+      exactCandidates.push(toSearchItem(exactByNickname));
+    }
+  }
+
   const params = new URLSearchParams({ nickname: trimmed, offset: "0", limit: "8" });
-  const response = await faceitFetch<FaceitSearchResponse>(`/search/players?${params.toString()}`, env, 1);
-  const items = (response.items ?? [])
+  const response = await faceitFetch<FaceitSearchResponse>(`/search/players?${params.toString()}`, env, 1).catch(() => ({ items: [] }));
+  const fuzzyItems = (response.items ?? [])
     .map((item) => ({
       nickname: String(item.nickname ?? "").trim(),
       avatar: String(item.avatar ?? FALLBACK_AVATAR),
       elo: parseNumber(item.games?.[GAME_ID]?.faceit_elo),
     }))
     .filter((item) => item.nickname);
+
+  const items = uniqueSearchItems([...exactCandidates, ...fuzzyItems]).slice(0, 8);
 
   return { items };
 }

@@ -1030,7 +1030,7 @@ export default function App() {
                     setSearchResults([]);
                   }
                 }}
-                placeholder="Поиск игрока FACEIT"
+                placeholder="Ник, ссылка FACEIT или Steam"
                 className="w-full rounded-md border border-zinc-700 bg-zinc-900/80 px-3 py-2 text-sm outline-none transition focus:border-zinc-500"
               />
               {searchResults.length > 0 ? (
@@ -1055,6 +1055,7 @@ export default function App() {
                   ))}
                 </div>
               ) : null}
+              <p className="mt-1 text-xs text-zinc-500">Поддержка: ник FACEIT, ссылка FACEIT, ссылка Steam.</p>
               {isSearching ? <p className="mt-1 text-xs text-zinc-500">Ищем игроков...</p> : null}
             </div>
           </div>
