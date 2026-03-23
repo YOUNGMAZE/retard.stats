@@ -919,6 +919,7 @@ export default function App() {
   }, [players, selectedNicknames]);
 
   const isSingleRowLayout = effectiveLayoutMode === "row" && visiblePlayers.length === 1;
+  const isMobileRowMode = effectiveLayoutMode === "row" && isMobileDevice;
 
   const listClassName = useMemo(() => {
     if (effectiveLayoutMode === "row") {
@@ -1264,13 +1265,20 @@ export default function App() {
                     <p className="mb-2 text-zinc-400">Матчи по картам</p>
                     {player.maps.length ? (
                       <>
-                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        <div className={isMobileRowMode ? "grid grid-cols-1 gap-2" : "grid grid-cols-1 gap-3 sm:grid-cols-2"}>
                           {player.maps.map((entry, mapIndex) => {
                             const mapKey = `${player.playerId}:${normalizeMapKey(entry.map)}:${mapIndex}`;
                             const expanded = Boolean(expandedMaps[mapKey]);
                             const mapLabelRightPaddingClass = normalizeMapKey(entry.map) === "overpass" ? "pr-0.5" : "pr-2";
                             return (
-                              <div key={mapKey} className="mx-auto w-[168px] rounded-md border border-zinc-800/80 p-2">
+                              <div
+                                key={mapKey}
+                                className={
+                                  isMobileRowMode
+                                    ? "w-full rounded-md border border-zinc-800/80 p-2"
+                                    : "mx-auto w-[168px] rounded-md border border-zinc-800/80 p-2"
+                                }
+                              >
                                 <button
                                   type="button"
                                   onClick={() => toggleMapPanel(player.playerId, mapKey)}
@@ -1286,12 +1294,16 @@ export default function App() {
                                         event.currentTarget.src = mapPreviewUri(entry.map);
                                       }}
                                     />
-                                    <span className={`absolute inset-0 flex items-center justify-end bg-black/30 pl-3 text-right text-lg font-black uppercase tracking-wide text-zinc-100 ${mapLabelRightPaddingClass}`}>
+                                    <span
+                                      className={`absolute inset-0 flex items-center justify-end bg-black/30 pl-3 text-right font-black uppercase tracking-wide text-zinc-100 ${
+                                        isMobileRowMode ? "text-base" : "text-lg"
+                                      } ${mapLabelRightPaddingClass}`}
+                                    >
                                       {entry.map}
                                     </span>
                                   </span>
                                 </button>
-                                <p className="mt-2 text-center text-xs">
+                                <p className={`mt-2 text-center ${isMobileRowMode ? "text-[11px]" : "text-xs"}`}>
                                   Матчи <b className="text-zinc-100">{entry.matches}</b>
                                   <span className="text-zinc-500"> | WR </span>
                                   <b className={entry.winRate < 50 ? "text-rose-400" : "text-emerald-300"}>{formatStatNumber(entry.winRate, 1)}%</b>
@@ -1300,7 +1312,7 @@ export default function App() {
                                 <div
                                   className={`grid transition-all duration-300 ${expanded ? "mt-2 grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"}`}
                                 >
-                                  <div className="overflow-hidden text-center text-xs text-zinc-300">
+                                  <div className={`overflow-hidden text-center text-zinc-300 ${isMobileRowMode ? "text-[11px] leading-relaxed" : "text-xs"}`}>
                                     W/L <b className="text-emerald-300">{entry.wins}</b>
                                     <span className="text-zinc-500">/</span>
                                     <b className="text-rose-300">{entry.losses}</b>
