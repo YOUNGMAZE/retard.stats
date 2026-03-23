@@ -292,6 +292,28 @@ function hashString(input: string): number {
   return Math.abs(hash);
 }
 
+const MAP_ICON_BY_KEY: Record<string, string> = {
+  mirage: "/maps/mirage.jpg",
+  inferno: "/maps/inferno.jpg",
+  dust2: "/maps/dust2.jpg",
+  nuke: "/maps/nuke.jpg",
+  ancient: "/maps/ancient.jpg",
+  anubis: "/maps/anubis.jpg",
+  vertigo: "/maps/vertigo.jpg",
+  train: "/maps/train.jpg",
+  overpass: "/maps/overpass.jpg",
+  cache: "/maps/cache.jpg",
+};
+
+function normalizeMapKey(mapName: string): string {
+  return mapName
+    .toLowerCase()
+    .trim()
+    .replace(/^de_/, "")
+    .replace(/\s+/g, "")
+    .replace(/[-_]/g, "");
+}
+
 function mapPreviewUri(mapName: string): string {
   const palette = [
     ["#1f2937", "#374151"],
@@ -304,6 +326,11 @@ function mapPreviewUri(mapName: string): string {
   const title = mapName.toUpperCase();
   const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='320' height='140' viewBox='0 0 320 140'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0%' stop-color='${start}'/><stop offset='100%' stop-color='${end}'/></linearGradient></defs><rect width='320' height='140' fill='url(#g)'/><rect x='12' y='12' width='296' height='116' rx='10' ry='10' fill='rgba(8,10,14,0.28)'/><text x='22' y='84' fill='white' font-family='Arial,Helvetica,sans-serif' font-size='30' font-weight='700'>${title}</text></svg>`;
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+}
+
+function getMapIconSrc(mapName: string): string {
+  const key = normalizeMapKey(mapName);
+  return MAP_ICON_BY_KEY[key] || mapPreviewUri(mapName);
 }
 
 function getBestMapName(maps: MapStats[]): string | null {
@@ -1221,7 +1248,7 @@ export default function App() {
                                   onClick={() => toggleMapPanel(player.playerId, entry.map)}
                                   className="mt-2 block w-full overflow-hidden rounded-md border border-zinc-700/70"
                                 >
-                                  <img src={mapPreviewUri(entry.map)} alt={`Карта ${entry.map}`} className="h-20 w-full object-cover transition duration-300 hover:scale-[1.03]" />
+                                  <img src={getMapIconSrc(entry.map)} alt={`Карта ${entry.map}`} className="h-20 w-full object-cover transition duration-300 hover:scale-[1.03]" />
                                 </button>
                                 <p className="mt-2 text-xs">
                                   Матчи <b className="text-zinc-100">{entry.matches}</b>
