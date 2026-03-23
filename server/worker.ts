@@ -1649,8 +1649,30 @@ function extractMatchIdFromPlayerPayload(player: FaceitPlayer): string {
   const playerPayload = player as Record<string, unknown>;
 
   const candidates = [
-    pickExistingValue(playerPayload, ["active_match_id", "current_match_id", "ongoing_match_id", "match_id", "matchId", "room_id"]),
-    pickExistingValue(gamePayload, ["active_match_id", "current_match_id", "ongoing_match_id", "match_id", "matchId", "room_id"]),
+    pickExistingValue(playerPayload, [
+      "active_match_id",
+      "current_match_id",
+      "ongoing_match_id",
+      "match_id",
+      "matchId",
+      "room_id",
+      "matchroom",
+      "match_room",
+      "room_url",
+      "match_url",
+    ]),
+    pickExistingValue(gamePayload, [
+      "active_match_id",
+      "current_match_id",
+      "ongoing_match_id",
+      "match_id",
+      "matchId",
+      "room_id",
+      "matchroom",
+      "match_room",
+      "room_url",
+      "match_url",
+    ]),
   ];
 
   for (const candidate of candidates) {
@@ -1659,12 +1681,12 @@ function extractMatchIdFromPlayerPayload(player: FaceitPlayer): string {
       continue;
     }
 
-    const fromRoomUrl = raw.match(/room\/([0-9a-f-]{10,})/i)?.[1];
+    const fromRoomUrl = raw.match(/room\/([a-z0-9-]{8,})/i)?.[1];
     if (fromRoomUrl) {
       return fromRoomUrl;
     }
 
-    if (/^[0-9a-f-]{10,}$/i.test(raw)) {
+    if (/^[a-z0-9-]{8,}$/i.test(raw)) {
       return raw;
     }
   }
@@ -1715,13 +1737,18 @@ async function fetchLiveRoomUrlFromProfile(nickname: string): Promise<string | n
     }
 
     const html = await response.text();
+    // FACEIT often renders room links inside escaped JSON blobs (https:\/\/...).
+    const decodedHtml = html.replace(/\\\//g, "/");
     const patterns = [
-      /https:\/\/www\.faceit\.com\/[^"'\s]*\/room\/([0-9a-f-]{10,})/i,
-      /\/room\/([0-9a-f-]{10,})/i,
+      /"matchroom"\s*:\s*"https?:\/\/www\.faceit\.com\/[^"'\s]*\/room\/([a-z0-9-]{8,})"/i,
+      /"matchroom"\s*:\s*"\/[^"'\s]*\/room\/([a-z0-9-]{8,})"/i,
+      /"(?:active_match_id|current_match_id|ongoing_match_id|match_id)"\s*:\s*"([a-z0-9-]{8,})"/i,
+      /https?:\/\/www\.faceit\.com\/[^"'\s]*\/room\/([a-z0-9-]{8,})/i,
+      /\/room\/([a-z0-9-]{8,})/i,
     ];
 
     for (const pattern of patterns) {
-      const match = html.match(pattern);
+      const match = decodedHtml.match(pattern);
       const matchId = String(match?.[1] ?? "").trim();
       if (matchId) {
         return `https://www.faceit.com/ru/cs2/room/${matchId}`;
