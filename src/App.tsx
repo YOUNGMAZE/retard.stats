@@ -398,7 +398,6 @@ export default function App() {
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [expandedMaps, setExpandedMaps] = useState<Record<string, boolean>>({});
-  const [expandedWeapons, setExpandedWeapons] = useState<Record<string, boolean>>({});
   const [errorText, setErrorText] = useState<string | null>(null);
   const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -879,13 +878,6 @@ export default function App() {
     }));
   }, []);
 
-  const toggleWeaponPanel = useCallback((playerId: string) => {
-    setExpandedWeapons((previous) => ({
-      ...previous,
-      [playerId]: !(previous[playerId] ?? true),
-    }));
-  }, []);
-
   if (isAuthChecking) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-zinc-950 px-6 py-8 text-zinc-100">
@@ -1100,8 +1092,6 @@ export default function App() {
             {visiblePlayers.map((player) => {
               const bestMapName = getBestMapName(player.maps);
               const faceitLevel = getFaceitLevel(player.elo);
-              const weaponPanelOpen = expandedWeapons[player.playerId] ?? true;
-              const favoriteWeaponName = (player.favoriteWeapon?.weapon ?? "").trim() || (player.weapons[0]?.weapon ?? "").trim();
 
               if (layoutMode === "mini") {
                 return (
@@ -1178,45 +1168,6 @@ export default function App() {
                     <StatColumn label="За день" value={player.day} />
                     <StatColumn label="За месяц" value={player.month} />
                     <StatColumn label="За всё время" value={player.total} />
-                  </div>
-
-                  <div className="mt-4 rounded-md border border-zinc-800/80 bg-zinc-900/30 p-3 text-sm text-zinc-300">
-                    <div className="flex items-center justify-between gap-3">
-                      <p className="text-zinc-400">Оружие</p>
-                      <button
-                        type="button"
-                        onClick={() => toggleWeaponPanel(player.playerId)}
-                        className="border-b border-zinc-600 text-xs uppercase tracking-wide text-zinc-200 transition hover:border-zinc-300"
-                      >
-                        {weaponPanelOpen ? "Свернуть" : "Развернуть"}
-                      </button>
-                    </div>
-
-                    <div className={`grid transition-all duration-300 ${weaponPanelOpen ? "mt-3 grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"}`}>
-                      <div className="overflow-hidden">
-                        {favoriteWeaponName ? (
-                          <p className="text-zinc-200">
-                            Любимое оружие: <b className="text-orange-300">{favoriteWeaponName}</b>
-                          </p>
-                        ) : (
-                          <p className="text-zinc-500">Нет данных по оружию.</p>
-                        )}
-
-                        {player.weapons.length ? (
-                          <div className="mt-2 space-y-1 text-xs sm:text-sm">
-                            {player.weapons.map((entry) => (
-                              <p key={`${player.playerId}:weapon:${entry.weapon}`}>
-                                <b className="text-zinc-100">{entry.weapon}</b>
-                                <span className="text-zinc-500"> | </span>
-                                Попадания <b className={entry.hitRate >= 50 ? "text-emerald-300" : "text-rose-300"}>{formatStatNumber(entry.hitRate, 1)}%</b>
-                                <span className="text-zinc-500"> | </span>
-                                AVG киллы <b className="text-zinc-100">{formatStatNumber(entry.avgKills, 1)}</b>
-                              </p>
-                            ))}
-                          </div>
-                        ) : null}
-                      </div>
-                    </div>
                   </div>
 
                   <div className="mt-4 text-sm text-zinc-300">
