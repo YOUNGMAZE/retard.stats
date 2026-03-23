@@ -1262,18 +1262,18 @@ export default function App() {
                             const mapKey = `${player.playerId}:${entry.map}`;
                             const expanded = Boolean(expandedMaps[mapKey]);
                             return (
-                              <div key={mapKey} className="rounded-md border border-zinc-800/80 p-2">
-                                <p className="font-medium text-zinc-100">{entry.map}</p>
+                              <div key={mapKey} className="mx-auto w-[168px] rounded-md border border-zinc-800/80 p-2">
+                                <p className="truncate text-center font-medium text-zinc-100">{entry.map}</p>
                                 <button
                                   type="button"
                                   onClick={() => toggleMapPanel(player.playerId, entry.map)}
-                                  className="group mt-2 mx-auto block w-fit overflow-hidden rounded-md border border-zinc-700/80 bg-zinc-900/70 p-1"
+                                  className="group mt-2 block w-full overflow-hidden rounded-md border border-zinc-700/80 bg-zinc-900/70"
                                 >
-                                  <span className="relative block aspect-[250/88] w-[84px] overflow-hidden rounded-sm bg-zinc-900">
+                                  <span className="relative block aspect-[250/88] w-full overflow-hidden rounded-md bg-zinc-900">
                                     <img
                                       src={getMapIconSrc(entry.map)}
                                       alt={`Карта ${entry.map}`}
-                                      className="absolute inset-0 block h-full w-full max-w-full object-contain object-center transition-transform duration-300 group-hover:scale-[1.01]"
+                                      className="absolute inset-0 block h-full w-full max-w-full object-contain object-center transition-transform duration-300 group-hover:scale-[1.02]"
                                       onError={(event) => {
                                         // If a custom map file is missing, keep UI stable with an inline fallback image.
                                         event.currentTarget.src = mapPreviewUri(entry.map);
@@ -1281,7 +1281,7 @@ export default function App() {
                                     />
                                   </span>
                                 </button>
-                                <p className="mt-2 text-xs">
+                                <p className="mt-2 text-center text-xs">
                                   Матчи <b className="text-zinc-100">{entry.matches}</b>
                                   <span className="text-zinc-500"> | WR </span>
                                   <b className={entry.winRate < 50 ? "text-rose-400" : "text-emerald-300"}>{formatStatNumber(entry.winRate, 1)}%</b>
@@ -1290,7 +1290,7 @@ export default function App() {
                                 <div
                                   className={`grid transition-all duration-300 ${expanded ? "mt-2 grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"}`}
                                 >
-                                  <div className="overflow-hidden text-xs text-zinc-300">
+                                  <div className="overflow-hidden text-center text-xs text-zinc-300">
                                     W/L <b className="text-emerald-300">{entry.wins}</b>
                                     <span className="text-zinc-500">/</span>
                                     <b className="text-rose-300">{entry.losses}</b>
