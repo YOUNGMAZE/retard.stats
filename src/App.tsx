@@ -447,6 +447,7 @@ export default function App() {
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [expandedMaps, setExpandedMaps] = useState<Record<string, boolean>>({});
+  const [isMapsSectionOpen, setIsMapsSectionOpen] = useState<Record<string, boolean>>({});
   const [errorText, setErrorText] = useState<string | null>(null);
   const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -962,6 +963,13 @@ export default function App() {
     });
   }, []);
 
+  const toggleMapsSection = useCallback((playerId: string) => {
+    setIsMapsSectionOpen((previous) => ({
+      ...previous,
+      [playerId]: !(previous[playerId] ?? true),
+    }));
+  }, []);
+
   if (isAuthChecking) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-zinc-950 px-6 py-8 text-zinc-100">
@@ -1262,80 +1270,92 @@ export default function App() {
                   </div>
 
                   <div className="mt-4 text-sm text-zinc-300">
-                    <p className="mb-2 text-zinc-400">Матчи по картам</p>
-                    {player.maps.length ? (
-                      <>
-                        <div className={isMobileRowMode ? "grid grid-cols-1 gap-2" : "grid grid-cols-1 gap-3 sm:grid-cols-2"}>
-                          {player.maps.map((entry, mapIndex) => {
-                            const mapKey = `${player.playerId}:${normalizeMapKey(entry.map)}:${mapIndex}`;
-                            const expanded = Boolean(expandedMaps[mapKey]);
-                            const mapLabelRightPaddingClass = normalizeMapKey(entry.map) === "overpass" ? "pr-0.5" : "pr-2";
-                            return (
-                              <div
-                                key={mapKey}
-                                className={
-                                  isMobileRowMode
-                                    ? "w-full rounded-md border border-zinc-800/80 p-2"
-                                    : "mx-auto w-[168px] rounded-md border border-zinc-800/80 p-2"
-                                }
-                              >
-                                <button
-                                  type="button"
-                                  onClick={() => toggleMapPanel(player.playerId, mapKey)}
-                                  className="group block w-full overflow-hidden rounded-md border border-zinc-700/80 bg-zinc-900/70"
-                                >
-                                  <span className="relative block aspect-[250/88] w-full overflow-hidden rounded-md bg-zinc-900">
-                                    <img
-                                      src={getMapIconSrc(entry.map)}
-                                      alt={`Карта ${entry.map}`}
-                                      className="absolute inset-0 block h-full w-full max-w-full object-contain object-center transition-transform duration-300 group-hover:scale-[1.02]"
-                                      onError={(event) => {
-                                        // If a custom map file is missing, keep UI stable with an inline fallback image.
-                                        event.currentTarget.src = mapPreviewUri(entry.map);
-                                      }}
-                                    />
-                                    <span
-                                      className={`absolute inset-0 flex items-center justify-end bg-black/30 pl-3 text-right font-black uppercase tracking-wide text-zinc-100 ${
-                                        isMobileRowMode ? "text-base" : "text-lg"
-                                      } ${mapLabelRightPaddingClass}`}
-                                    >
-                                      {entry.map}
-                                    </span>
-                                  </span>
-                                </button>
-                                <p className={`mt-2 text-center ${isMobileRowMode ? "text-[11px]" : "text-xs"}`}>
-                                  Матчи <b className="text-zinc-100">{entry.matches}</b>
-                                  <span className="text-zinc-500"> | WR </span>
-                                  <b className={entry.winRate < 50 ? "text-rose-400" : "text-emerald-300"}>{formatStatNumber(entry.winRate, 1)}%</b>
-                                </p>
+                    <div className="mb-2 flex items-center justify-between gap-3">
+                      <p className="text-zinc-400">Матчи по картам</p>
+                      <button
+                        type="button"
+                        onClick={() => toggleMapsSection(player.playerId)}
+                        className="border-b border-zinc-600 text-xs text-zinc-300 transition hover:border-zinc-300"
+                      >
+                        {(isMapsSectionOpen[player.playerId] ?? true) ? "Свернуть" : "Развернуть"}
+                      </button>
+                    </div>
 
+                    {(isMapsSectionOpen[player.playerId] ?? true) ? (
+                      player.maps.length ? (
+                        <>
+                          <div className={isMobileRowMode ? "grid grid-cols-1 gap-2" : "grid grid-cols-1 gap-3 sm:grid-cols-2"}>
+                            {player.maps.map((entry, mapIndex) => {
+                              const mapKey = `${player.playerId}:${normalizeMapKey(entry.map)}:${mapIndex}`;
+                              const expanded = Boolean(expandedMaps[mapKey]);
+                              const mapLabelRightPaddingClass = normalizeMapKey(entry.map) === "overpass" ? "pr-0.5" : "pr-2";
+                              return (
                                 <div
-                                  className={`grid transition-all duration-300 ${expanded ? "mt-2 grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"}`}
+                                  key={mapKey}
+                                  className={
+                                    isMobileRowMode
+                                      ? "w-full rounded-md border border-zinc-800/80 p-2"
+                                      : "mx-auto w-[168px] rounded-md border border-zinc-800/80 p-2"
+                                  }
                                 >
-                                  <div className={`overflow-hidden text-center text-zinc-300 ${isMobileRowMode ? "text-[11px] leading-relaxed" : "text-xs"}`}>
-                                    W/L <b className="text-emerald-300">{entry.wins}</b>
-                                    <span className="text-zinc-500">/</span>
-                                    <b className="text-rose-300">{entry.losses}</b>
-                                    <span className="text-zinc-500"> | </span>
-                                    K/D <b className="text-zinc-100">{formatStatNumber(entry.kd)}</b>
-                                    <span className="text-zinc-500"> | </span>
-                                    AVG <b className="text-zinc-100">{formatStatNumber(entry.avgKills, 1)}</b>
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleMapPanel(player.playerId, mapKey)}
+                                    className="group block w-full overflow-hidden rounded-md border border-zinc-700/80 bg-zinc-900/70"
+                                  >
+                                    <span className="relative block aspect-[250/88] w-full overflow-hidden rounded-md bg-zinc-900">
+                                      <img
+                                        src={getMapIconSrc(entry.map)}
+                                        alt={`Карта ${entry.map}`}
+                                        className="absolute inset-0 block h-full w-full max-w-full object-contain object-center transition-transform duration-300 group-hover:scale-[1.02]"
+                                        onError={(event) => {
+                                          // If a custom map file is missing, keep UI stable with an inline fallback image.
+                                          event.currentTarget.src = mapPreviewUri(entry.map);
+                                        }}
+                                      />
+                                      <span
+                                        className={`absolute inset-0 flex items-center justify-end bg-black/30 pl-3 text-right font-black uppercase tracking-wide text-zinc-100 ${
+                                          isMobileRowMode ? "text-base" : "text-lg"
+                                        } ${mapLabelRightPaddingClass}`}
+                                      >
+                                        {entry.map}
+                                      </span>
+                                    </span>
+                                  </button>
+                                  <p className={`mt-2 text-center ${isMobileRowMode ? "text-[11px]" : "text-xs"}`}>
+                                    Матчи <b className="text-zinc-100">{entry.matches}</b>
+                                    <span className="text-zinc-500"> | WR </span>
+                                    <b className={entry.winRate < 50 ? "text-rose-400" : "text-emerald-300"}>{formatStatNumber(entry.winRate, 1)}%</b>
+                                  </p>
+
+                                  <div
+                                    className={`grid transition-all duration-300 ${expanded ? "mt-2 grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"}`}
+                                  >
+                                    <div className={`overflow-hidden text-center text-zinc-300 ${isMobileRowMode ? "text-[11px] leading-relaxed" : "text-xs"}`}>
+                                      W/L <b className="text-emerald-300">{entry.wins}</b>
+                                      <span className="text-zinc-500">/</span>
+                                      <b className="text-rose-300">{entry.losses}</b>
+                                      <span className="text-zinc-500"> | </span>
+                                      K/D <b className="text-zinc-100">{formatStatNumber(entry.kd)}</b>
+                                      <span className="text-zinc-500"> | </span>
+                                      AVG <b className="text-zinc-100">{formatStatNumber(entry.avgKills, 1)}</b>
+                                    </div>
                                   </div>
                                 </div>
-                              </div>
-                            );
-                          })}
-                        </div>
+                              );
+                            })}
+                          </div>
 
-                        {bestMapName ? (
-                          <p className="mt-2 text-yellow-300">
-                            best map: <b>{bestMapName}</b>
-                          </p>
-                        ) : null}
-                      </>
-                    ) : (
-                      <p className="text-zinc-500">Нет данных по картам.</p>
-                    )}
+                          {bestMapName ? (
+                            <p className="mt-2 text-yellow-300">
+                              best map: <b>{bestMapName}</b>
+                            </p>
+                          ) : null}
+                        </>
+                      ) : (
+                        <p className="text-zinc-500">Нет данных по картам.</p>
+                      )
+                    ) : null}
                   </div>
                 </li>
               );
