@@ -1,5 +1,6 @@
 const FACEIT_API_BASE_URL = "https://open.faceit.com/data/v4";
 const GAME_ID = "cs2";
+const GAME_MODE = "5v5";
 const AVG_SAMPLE_SIZE = 30;
 const HISTORY_LIMIT = 100;
 const CACHE_TTL_MS = 300_000;
@@ -43,6 +44,42 @@ const KNOWN_WEAPON_LABELS = new Set([
   "smokegrenade",
   "flashbang",
   "knife",
+  "pistol",
+  "pistols",
+  "rifle",
+  "rifles",
+  "smg",
+  "sniper",
+  "snipers",
+  "heavy",
+  "grenade",
+  "grenades",
+]);
+
+const NON_WEAPON_TOKENS = new Set([
+  "all",
+  "overall",
+  "total",
+  "totals",
+  "average",
+  "avg",
+  "last",
+  "recent",
+  "wins",
+  "losses",
+  "win",
+  "loss",
+  "matches",
+  "games",
+  "headshot",
+  "headshots",
+  "accuracy",
+  "hitrate",
+  "kdratio",
+  "kills",
+  "deaths",
+  "assist",
+  "assists",
 ]);
 
 const WEAPON_ALIASES: Record<string, string> = {
@@ -92,6 +129,12 @@ const WEAPON_DISPLAY_NAMES: Record<string, string> = {
   smokegrenade: "Smoke",
   flashbang: "Flashbang",
   knife: "Knife",
+  pistol: "Pistols",
+  rifle: "Rifles",
+  smg: "SMG",
+  sniper: "Snipers",
+  heavy: "Heavy",
+  grenade: "Grenades",
 };
 
 type WindowStats = {
@@ -319,6 +362,26 @@ function normalizeWeaponName(value: unknown): string {
     .join(" ");
 }
 
+function isLikelyWeaponToken(value: string): boolean {
+  if (!value || value.length < 2) {
+    return false;
+  }
+  if (NON_WEAPON_TOKENS.has(value)) {
+    return false;
+  }
+
+  // Reject common map names so map segments are not misclassified as weapons.
+  if (["mirage", "inferno", "nuke", "anubis", "ancient", "dust2", "vertigo", "train", "overpass"].includes(value)) {
+    return false;
+  }
+
+  if (KNOWN_WEAPON_LABELS.has(value)) {
+    return true;
+  }
+
+  return /^(ak|m4|awp|usp|glock|deagle|famas|galil|mp|p90|ssg|scar|g3|tec|five|p250|cz|knife|smoke|flash|molo|nova|xm|rifle|pistol|smg|sniper|heavy|grenade)/.test(value);
+}
+
 function resolveWeaponToken(value: unknown): string {
   const rawToken = normalizeToken(value);
   if (!rawToken) {
@@ -343,6 +406,14 @@ function resolveWeaponToken(value: unknown): string {
     return trimmedWeaponPrefix;
   }
 
+  if (isLikelyWeaponToken(trimmedWeaponPrefix)) {
+    return trimmedWeaponPrefix;
+  }
+
+  if (isLikelyWeaponToken(rawToken)) {
+    return rawToken;
+  }
+
   return "";
 }
 
@@ -362,8 +433,24 @@ function parseDecimal(value: unknown): number {
 }
 
 function parseNumber(value: unknown): number {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : 0;
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : 0;
+  }
+
+  const raw = String(value ?? "").trim();
+  if (!raw) {
+    return 0;
+  }
+
+  const normalized = raw.replace(/\s/g, "").replace(/,/g, "");
+  const parsed = Number(normalized);
+  if (Number.isFinite(parsed)) {
+    return parsed;
+  }
+
+  // Fallback for values mixed with labels like "123 matches".
+  const decimalFallback = parseDecimal(raw);
+  return Number.isFinite(decimalFallback) ? decimalFallback : 0;
 }
 
 function toHex(buffer: ArrayBuffer): string {
@@ -1494,7 +1581,7 @@ async function loadPlayerStats(nickname: string, env: Env): Promise<PlayerViewMo
 
   const player = await faceitFetch<FaceitPlayer>(`/players?nickname=${encodeURIComponent(nickname)}`, env);
   const [stats, history] = await Promise.all([
-    faceitFetch<FaceitPlayerStats>(`/players/${player.player_id}/stats/${GAME_ID}`, env),
+    faceitFetch<FaceitPlayerStats>(`/players/${player.player_id}/stats/${GAME_ID}?game_mode=${encodeURIComponent(GAME_MODE)}`, env),
     fetchRecentHistory(player.player_id, env),
   ]);
 
