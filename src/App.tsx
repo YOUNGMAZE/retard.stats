@@ -1458,7 +1458,7 @@ export default function App() {
                                   onClick={() => toggleMapPanel(player.playerId, mapKey)}
                                   className="ui-action group block w-full overflow-hidden rounded-md border border-zinc-700/80 bg-zinc-900/70"
                                 >
-                                  <span className="relative block aspect-[250/88] w-full overflow-hidden rounded-md bg-zinc-900">
+                                  <span className="relative block aspect-[250/82] w-full overflow-hidden rounded-md bg-zinc-900">
                                     <img
                                       src={getMapIconSrc(entry.map)}
                                       alt={`Карта ${entry.map}`}
@@ -1514,7 +1514,7 @@ export default function App() {
                               onClick={() => toggleMapPanel(player.playerId, collapsedBestMapPanelKey)}
                               className="group block w-full overflow-hidden rounded-md border border-zinc-700/80 bg-zinc-900/70"
                             >
-                              <span className="relative block aspect-[250/88] w-full overflow-hidden rounded-md bg-zinc-900">
+                              <span className="relative block aspect-[250/82] w-full overflow-hidden rounded-md bg-zinc-900">
                                 <img
                                   src={getMapIconSrc(bestMap.map)}
                                   alt={`Карта ${bestMap.map}`}
