@@ -1648,12 +1648,28 @@ function extractMatchIdFromPlayerPayload(player: FaceitPlayer): string {
   const gamePayload = (player.games?.[GAME_ID] ?? {}) as Record<string, unknown>;
   const playerPayload = player as Record<string, unknown>;
 
-  const candidate =
-    pickExistingValue(playerPayload, ["active_match_id", "current_match_id", "ongoing_match_id", "match_id"]) ??
-    pickExistingValue(gamePayload, ["active_match_id", "current_match_id", "ongoing_match_id", "match_id"]);
+  const candidates = [
+    pickExistingValue(playerPayload, ["active_match_id", "current_match_id", "ongoing_match_id", "match_id", "matchId", "room_id"]),
+    pickExistingValue(gamePayload, ["active_match_id", "current_match_id", "ongoing_match_id", "match_id", "matchId", "room_id"]),
+  ];
 
-  const matchId = String(candidate ?? "").trim();
-  return /^[0-9a-f-]{32,36}$/i.test(matchId) ? matchId : "";
+  for (const candidate of candidates) {
+    const raw = String(candidate ?? "").trim();
+    if (!raw) {
+      continue;
+    }
+
+    const fromRoomUrl = raw.match(/room\/([0-9a-f-]{10,})/i)?.[1];
+    if (fromRoomUrl) {
+      return fromRoomUrl;
+    }
+
+    if (/^[0-9a-f-]{10,}$/i.test(raw)) {
+      return raw;
+    }
+  }
+
+  return "";
 }
 
 function isPlayerLikelyInMatch(player: FaceitPlayer): boolean {
@@ -1674,16 +1690,9 @@ function isPlayerLikelyInMatch(player: FaceitPlayer): boolean {
     }
 
     if (
-      [
-        "inmatch",
-        "in_game",
-        "ingame",
-        "playing",
-        "busy",
-        "ongoing",
-        "started",
-        "match",
-      ].includes(token)
+      ["inmatch", "ingame", "playing", "busy", "ongoing", "started", "match", "live", "matchmaking", "queue"].some((needle) =>
+        token.includes(needle),
+      )
     ) {
       return true;
     }
@@ -1707,8 +1716,8 @@ async function fetchLiveRoomUrlFromProfile(nickname: string): Promise<string | n
 
     const html = await response.text();
     const patterns = [
-      /https:\/\/www\.faceit\.com\/[a-z]{2}\/cs2\/room\/([0-9a-f-]{36})/i,
-      /\/cs2\/room\/([0-9a-f-]{36})/i,
+      /https:\/\/www\.faceit\.com\/[^"'\s]*\/room\/([0-9a-f-]{10,})/i,
+      /\/room\/([0-9a-f-]{10,})/i,
     ];
 
     for (const pattern of patterns) {
@@ -1740,13 +1749,10 @@ async function resolveActivity(player: FaceitPlayer, history: PlayerMatch[]): Pr
     };
   }
 
-  if (!isPlayerLikelyInMatch(player)) {
-    return { inMatch: false };
-  }
-
+  // Always try profile HTML as a final source. FACEIT player payload is often inconsistent for live presence.
   const profileRoomUrl = await fetchLiveRoomUrlFromProfile(player.nickname);
   if (!profileRoomUrl) {
-    return { inMatch: false };
+    return isPlayerLikelyInMatch(player) ? { inMatch: true } : { inMatch: false };
   }
 
   const matchId = profileRoomUrl.split("/").pop() ?? "";
