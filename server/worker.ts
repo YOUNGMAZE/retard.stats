@@ -1084,6 +1084,9 @@ async function searchPlayers(query: string, env: Env): Promise<SearchApiResponse
 
 function pickCorsOrigin(request: Request, env: Env): string {
   const requestOrigin = request.headers.get("origin") ?? "";
+  if (!requestOrigin) {
+    return "*";
+  }
   if (requestOrigin.startsWith("chrome-extension://")) {
     return requestOrigin;
   }
@@ -1102,7 +1105,9 @@ function pickCorsOrigin(request: Request, env: Env): string {
     return requestOrigin;
   }
 
-  return allowedOrigins[0] ?? "*";
+  // Return wildcard for unknown origins to avoid browser-side fetch failures
+  // when ALLOWED_ORIGINS is not configured correctly.
+  return "*";
 }
 
 function corsHeaders(request: Request, env: Env): HeadersInit {
@@ -1118,76 +1123,75 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     const headers = corsHeaders(request, env);
-
-    if (request.method === "OPTIONS") {
-      return new Response(null, { status: 204, headers });
-    }
-
-    if (url.pathname === "/health") {
-      return json({ ok: true }, { headers });
-    }
-
-    const validPaths = new Set([
-      "/api/stats",
-      "/api/player-stats",
-      "/api/search-players",
-      "/api/auth/register",
-      "/api/auth/login",
-      "/api/auth/me",
-      "/api/auth/logout",
-    ]);
-    if (!validPaths.has(url.pathname)) {
-      return json({ error: "Not Found" }, { status: 404, headers });
-    }
-
-    if (!hasAuthPersistenceConfigured(env)) {
-      return json(
-        {
-          error: "AUTH_STORE and AUTH_PEPPER must be configured",
-        },
-        { status: 500, headers },
-      );
-    }
-
-    if (url.pathname === "/api/auth/register") {
-      if (request.method !== "POST") {
-        return json({ error: "Method Not Allowed" }, { status: 405, headers });
+    try {
+      if (request.method === "OPTIONS") {
+        return new Response(null, { status: 204, headers });
       }
-      const response = await registerUser(request, env);
-      return new Response(response.body, { status: response.status, headers: { ...headers, "content-type": "application/json; charset=utf-8" } });
-    }
 
-    if (url.pathname === "/api/auth/login") {
-      if (request.method !== "POST") {
-        return json({ error: "Method Not Allowed" }, { status: 405, headers });
+      if (url.pathname === "/health") {
+        return json({ ok: true }, { headers });
       }
-      const response = await loginUser(request, env);
-      return new Response(response.body, { status: response.status, headers: { ...headers, "content-type": "application/json; charset=utf-8" } });
-    }
 
-    if (url.pathname === "/api/auth/me") {
+      const validPaths = new Set([
+        "/api/stats",
+        "/api/player-stats",
+        "/api/search-players",
+        "/api/auth/register",
+        "/api/auth/login",
+        "/api/auth/me",
+        "/api/auth/logout",
+      ]);
+      if (!validPaths.has(url.pathname)) {
+        return json({ error: "Not Found" }, { status: 404, headers });
+      }
+
+      if (!hasAuthPersistenceConfigured(env)) {
+        return json(
+          {
+            error: "AUTH_STORE and AUTH_PEPPER must be configured",
+          },
+          { status: 500, headers },
+        );
+      }
+
+      if (url.pathname === "/api/auth/register") {
+        if (request.method !== "POST") {
+          return json({ error: "Method Not Allowed" }, { status: 405, headers });
+        }
+        const response = await registerUser(request, env);
+        return new Response(response.body, { status: response.status, headers: { ...headers, "content-type": "application/json; charset=utf-8" } });
+      }
+
+      if (url.pathname === "/api/auth/login") {
+        if (request.method !== "POST") {
+          return json({ error: "Method Not Allowed" }, { status: 405, headers });
+        }
+        const response = await loginUser(request, env);
+        return new Response(response.body, { status: response.status, headers: { ...headers, "content-type": "application/json; charset=utf-8" } });
+      }
+
+      if (url.pathname === "/api/auth/me") {
+        const session = await requireAuth(request, env);
+        if (!session) {
+          return json({ error: "Unauthorized" }, { status: 401, headers });
+        }
+        return json({ username: session.username, expiresAtIso: new Date(session.expiresAt).toISOString() }, { headers });
+      }
+
+      if (url.pathname === "/api/auth/logout") {
+        const response = await logoutUser(request, env);
+        return new Response(response.body, { status: response.status, headers: { ...headers, "content-type": "application/json; charset=utf-8" } });
+      }
+
       const session = await requireAuth(request, env);
       if (!session) {
         return json({ error: "Unauthorized" }, { status: 401, headers });
       }
-      return json({ username: session.username, expiresAtIso: new Date(session.expiresAt).toISOString() }, { headers });
-    }
 
-    if (url.pathname === "/api/auth/logout") {
-      const response = await logoutUser(request, env);
-      return new Response(response.body, { status: response.status, headers: { ...headers, "content-type": "application/json; charset=utf-8" } });
-    }
+      if (!env.FACEIT_API_KEY) {
+        return json({ error: "FACEIT_API_KEY is missing" }, { status: 500, headers });
+      }
 
-    const session = await requireAuth(request, env);
-    if (!session) {
-      return json({ error: "Unauthorized" }, { status: 401, headers });
-    }
-
-    if (!env.FACEIT_API_KEY) {
-      return json({ error: "FACEIT_API_KEY is missing" }, { status: 500, headers });
-    }
-
-    try {
       if (url.pathname === "/api/search-players") {
         const query = url.searchParams.get("nickname") ?? "";
         const payload = await searchPlayers(query, env);
@@ -1286,6 +1290,5 @@ export default {
           },
         },
       );
-    }
   },
 };

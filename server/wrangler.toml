@@ -7,4 +7,4 @@ ALLOWED_ORIGINS = "https://youngmaze.github.io,http://localhost:5173"
 
 [[kv_namespaces]]
 binding = "AUTH_STORE"
-id = "REPLACE_WITH_KV_NAMESPACE_ID"
+id = "78b54b69880f48df9f294c5a3981bda6"
