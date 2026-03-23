@@ -1707,7 +1707,6 @@ async function fetchLiveRoomUrlFromProfile(nickname: string): Promise<string | n
 
     const html = await response.text();
     const patterns = [
-      /https:\\/\\/www\.faceit\.com\\\/[a-z]{2}\\\/cs2\\\/room\\\/([0-9a-f-]{36})/i,
       /https:\/\/www\.faceit\.com\/[a-z]{2}\/cs2\/room\/([0-9a-f-]{36})/i,
       /\/cs2\/room\/([0-9a-f-]{36})/i,
     ];
