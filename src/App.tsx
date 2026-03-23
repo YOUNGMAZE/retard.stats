@@ -1184,6 +1184,8 @@ export default function App() {
             {visiblePlayers.map((player) => {
               const bestMap = getBestMap(player.maps);
               const mapsSectionOpen = isMapsSectionOpen[player.playerId] ?? true;
+              const collapsedBestMapPanelKey = `${player.playerId}:best-map-collapsed`;
+              const isCollapsedBestMapOpen = Boolean(expandedMaps[collapsedBestMapPanelKey]);
               const faceitLevel = getFaceitLevel(player.elo);
 
               if (effectiveLayoutMode === "mini") {
@@ -1350,36 +1352,46 @@ export default function App() {
 
                     {!mapsSectionOpen && bestMap ? (
                       <div className="mt-2 rounded-md border border-zinc-800/80 p-2">
-                        <p className="text-xs uppercase tracking-wide text-yellow-300">Лучшая карта</p>
-                        <div className="mt-2 mx-auto w-[168px] rounded-md border border-zinc-800/80 p-2">
-                          <span className="relative block aspect-[250/88] w-full overflow-hidden rounded-md border border-zinc-700/80 bg-zinc-900/70">
-                            <img
-                              src={getMapIconSrc(bestMap.map)}
-                              alt={`Карта ${bestMap.map}`}
-                              className="absolute inset-0 block h-full w-full max-w-full object-contain object-center"
-                              onError={(event) => {
-                                event.currentTarget.src = mapPreviewUri(bestMap.map);
-                              }}
-                            />
-                            <span className="absolute inset-0 flex items-center justify-end bg-black/30 pl-3 pr-2 text-right text-lg font-black uppercase tracking-wide text-zinc-100">
-                              {bestMap.map}
+                        <p className="text-[11px] uppercase tracking-wide text-yellow-300">Лучшая карта</p>
+                        <div className="mt-1 mx-auto w-[168px]">
+                          <button
+                            type="button"
+                            onClick={() => toggleMapPanel(player.playerId, collapsedBestMapPanelKey)}
+                            className="group block w-full overflow-hidden rounded-md border border-zinc-700/80 bg-zinc-900/70"
+                          >
+                            <span className="relative block aspect-[250/88] w-full overflow-hidden rounded-md bg-zinc-900">
+                              <img
+                                src={getMapIconSrc(bestMap.map)}
+                                alt={`Карта ${bestMap.map}`}
+                                className="absolute inset-0 block h-full w-full max-w-full object-contain object-center transition-transform duration-300 group-hover:scale-[1.02]"
+                                onError={(event) => {
+                                  event.currentTarget.src = mapPreviewUri(bestMap.map);
+                                }}
+                              />
+                              <span className="absolute inset-0 flex items-center justify-end bg-black/30 pl-3 pr-2 text-right text-lg font-black uppercase tracking-wide text-zinc-100">
+                                {bestMap.map}
+                              </span>
                             </span>
-                          </span>
+                          </button>
 
-                          <p className="mt-2 text-center text-xs">
-                            Матчи <b className="text-zinc-100">{bestMap.matches}</b>
-                            <span className="text-zinc-500"> | WR </span>
-                            <b className={bestMap.winRate < 50 ? "text-rose-400" : "text-emerald-300"}>{formatStatNumber(bestMap.winRate, 1)}%</b>
-                          </p>
-                          <p className="mt-1 text-center text-xs text-zinc-300">
-                            W/L <b className="text-emerald-300">{bestMap.wins}</b>
-                            <span className="text-zinc-500">/</span>
-                            <b className="text-rose-300">{bestMap.losses}</b>
-                            <span className="text-zinc-500"> | </span>
-                            K/D <b className="text-zinc-100">{formatStatNumber(bestMap.kd)}</b>
-                            <span className="text-zinc-500"> | </span>
-                            AVG <b className="text-zinc-100">{formatStatNumber(bestMap.avgKills, 1)}</b>
-                          </p>
+                          <div className={`grid transition-all duration-300 ${isCollapsedBestMapOpen ? "mt-2 grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"}`}>
+                            <div className="overflow-hidden text-center text-xs text-zinc-300">
+                              <p>
+                                Матчи <b className="text-zinc-100">{bestMap.matches}</b>
+                                <span className="text-zinc-500"> | WR </span>
+                                <b className={bestMap.winRate < 50 ? "text-rose-400" : "text-emerald-300"}>{formatStatNumber(bestMap.winRate, 1)}%</b>
+                              </p>
+                              <p className="mt-1">
+                                W/L <b className="text-emerald-300">{bestMap.wins}</b>
+                                <span className="text-zinc-500">/</span>
+                                <b className="text-rose-300">{bestMap.losses}</b>
+                                <span className="text-zinc-500"> | </span>
+                                K/D <b className="text-zinc-100">{formatStatNumber(bestMap.kd)}</b>
+                                <span className="text-zinc-500"> | </span>
+                                AVG <b className="text-zinc-100">{formatStatNumber(bestMap.avgKills, 1)}</b>
+                              </p>
+                            </div>
+                          </div>
                         </div>
                       </div>
                     ) : null}
