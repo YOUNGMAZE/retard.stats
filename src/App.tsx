@@ -416,6 +416,9 @@ export default function App() {
     setAuthError(null);
 
     try {
+      let tokenFromRegister = "";
+      let usernameFromRegister = "";
+
       if (authMode === "register") {
         const registerResponse = await fetch(`${STATS_API_URL}/api/auth/register`, {
           method: "POST",
@@ -428,6 +431,18 @@ export default function App() {
         const registerPayload = (await registerResponse.json()) as AuthResponse;
         if (!registerResponse.ok) {
           throw new Error(registerPayload.error || "Ошибка регистрации");
+        }
+
+        tokenFromRegister = String(registerPayload.token ?? "").trim();
+        usernameFromRegister = String(registerPayload.username ?? "").trim();
+
+        if (tokenFromRegister) {
+          localStorage.setItem(LOCAL_AUTH_TOKEN_KEY, tokenFromRegister);
+          setAuthToken(tokenFromRegister);
+          setAuthUsername(usernameFromRegister || username);
+          setPasswordInput("");
+          setAuthError(null);
+          return;
         }
       }
 

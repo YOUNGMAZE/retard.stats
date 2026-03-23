@@ -422,7 +422,26 @@ async function registerUser(request: Request, env: Env): Promise<Response> {
   };
 
   await putAuthUser(user, env);
-  return json({ ok: true, username: user.username });
+
+  // Create session right away so UI can complete registration without a second
+  // immediate KV read (which can be eventually consistent across PoPs).
+  const token = createRandomToken(32);
+  const tokenHash = await hashSessionToken(token, env);
+  const expiresAt = Date.now() + SESSION_TTL_SECONDS * 1000;
+  const session: AuthSessionRecord = {
+    tokenHash,
+    username: user.username,
+    usernameNormalized: user.usernameNormalized,
+    expiresAt,
+  };
+  await putAuthSession(session, env);
+
+  return json({
+    ok: true,
+    username: user.username,
+    token,
+    expiresAtIso: new Date(expiresAt).toISOString(),
+  });
 }
 
 async function loginUser(request: Request, env: Env): Promise<Response> {
