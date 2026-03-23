@@ -4,6 +4,7 @@ const REFRESH_MS = 60_000;
 const LOCAL_CACHE_KEY = "retard-stats-cache-v2";
 const LOCAL_LAYOUT_KEY = "retard-stats-layout-v1";
 const LOCAL_PLAYERS_KEY = "retard-stats-players-v1";
+const LOCAL_AUTH_TOKEN_KEY = "retard-stats-auth-token-v1";
 const DEFAULT_STATS_API_URL = "https://retard-stats-api.wladjika25.workers.dev";
 const STATS_API_URL = (import.meta.env.VITE_STATS_API_URL || DEFAULT_STATS_API_URL).trim().replace(/\/+$/, "");
 const DEFAULT_PLAYERS = ["mazedaddy", "SEXN", "unborrasq"];
@@ -76,6 +77,12 @@ type SearchResult = {
   nickname: string;
   avatar: string;
   elo: number;
+};
+
+type AuthResponse = {
+  token?: string;
+  username?: string;
+  error?: string;
 };
 
 function buildFaceitProfileUrl(nickname: string): string {
@@ -332,11 +339,143 @@ export default function App() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
   const [nowTick, setNowTick] = useState(Date.now());
+  const [authToken, setAuthToken] = useState<string>(() => localStorage.getItem(LOCAL_AUTH_TOKEN_KEY) ?? "");
+  const [authUsername, setAuthUsername] = useState<string | null>(null);
+  const [isAuthChecking, setIsAuthChecking] = useState(true);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [authMode, setAuthMode] = useState<"login" | "register">("login");
+  const [loginInput, setLoginInput] = useState("");
+  const [passwordInput, setPasswordInput] = useState("");
+  const [isAuthSubmitting, setIsAuthSubmitting] = useState(false);
   const playersRef = useRef<PlayerViewModel[]>([]);
 
   useEffect(() => {
     playersRef.current = players;
   }, [players]);
+
+  useEffect(() => {
+    if (!authToken) {
+      setAuthUsername(null);
+      setIsAuthChecking(false);
+      localStorage.removeItem(LOCAL_AUTH_TOKEN_KEY);
+      return;
+    }
+
+    let cancelled = false;
+
+    const checkSession = async () => {
+      setIsAuthChecking(true);
+      try {
+        const response = await fetch(`${STATS_API_URL}/api/auth/me`, {
+          headers: {
+            Accept: "application/json",
+            Authorization: `Bearer ${authToken}`,
+          },
+        });
+
+        if (!response.ok) {
+          throw new Error("Сессия истекла. Войди снова.");
+        }
+
+        const payload = (await response.json()) as { username?: string };
+        if (!cancelled) {
+          setAuthUsername(String(payload.username ?? "").trim() || null);
+          setAuthError(null);
+          localStorage.setItem(LOCAL_AUTH_TOKEN_KEY, authToken);
+        }
+      } catch {
+        if (!cancelled) {
+          setAuthUsername(null);
+          setAuthToken("");
+          localStorage.removeItem(LOCAL_AUTH_TOKEN_KEY);
+        }
+      } finally {
+        if (!cancelled) {
+          setIsAuthChecking(false);
+        }
+      }
+    };
+
+    void checkSession();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authToken]);
+
+  const submitAuth = useCallback(async () => {
+    const username = loginInput.trim();
+    const password = passwordInput;
+
+    if (!username || !password) {
+      setAuthError("Введи логин и пароль");
+      return;
+    }
+
+    setIsAuthSubmitting(true);
+    setAuthError(null);
+
+    try {
+      if (authMode === "register") {
+        const registerResponse = await fetch(`${STATS_API_URL}/api/auth/register`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
+          body: JSON.stringify({ username, password }),
+        });
+        const registerPayload = (await registerResponse.json()) as AuthResponse;
+        if (!registerResponse.ok) {
+          throw new Error(registerPayload.error || "Ошибка регистрации");
+        }
+      }
+
+      const loginResponse = await fetch(`${STATS_API_URL}/api/auth/login`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({ username, password }),
+      });
+      const loginPayload = (await loginResponse.json()) as AuthResponse;
+
+      if (!loginResponse.ok || !loginPayload.token) {
+        throw new Error(loginPayload.error || "Ошибка входа");
+      }
+
+      localStorage.setItem(LOCAL_AUTH_TOKEN_KEY, loginPayload.token);
+      setAuthToken(loginPayload.token);
+      setAuthUsername(loginPayload.username || username);
+      setPasswordInput("");
+      setAuthError(null);
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : "Не удалось выполнить авторизацию");
+    } finally {
+      setIsAuthSubmitting(false);
+    }
+  }, [authMode, loginInput, passwordInput]);
+
+  const logout = useCallback(async () => {
+    if (authToken) {
+      try {
+        await fetch(`${STATS_API_URL}/api/auth/logout`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${authToken}`,
+          },
+        });
+      } catch {
+        // No-op.
+      }
+    }
+
+    setAuthToken("");
+    setAuthUsername(null);
+    setPlayers([]);
+    localStorage.removeItem(LOCAL_AUTH_TOKEN_KEY);
+  }, [authToken]);
 
   useEffect(() => {
     try {
@@ -407,13 +546,23 @@ export default function App() {
       return;
     }
 
+    if (!authToken) {
+      setPlayers([]);
+      setErrorText("Нужен вход в аккаунт");
+      setIsInitialLoading(false);
+      return;
+    }
+
     setIsRefreshing(true);
 
     try {
       const settled = await Promise.allSettled(
         selectedNicknames.map(async (nickname) => {
           const response = await fetch(`${STATS_API_URL}/api/player-stats?nickname=${encodeURIComponent(nickname)}`, {
-            headers: { Accept: "application/json" },
+            headers: {
+              Accept: "application/json",
+              Authorization: `Bearer ${authToken}`,
+            },
           });
 
           if (!response.ok) {
@@ -480,7 +629,7 @@ export default function App() {
       setIsInitialLoading(false);
       setIsRefreshing(false);
     }
-  }, [selectedNicknames]);
+  }, [selectedNicknames, authToken]);
 
   useEffect(() => {
     void loadStats();
@@ -494,7 +643,7 @@ export default function App() {
   useEffect(() => {
     const timeoutId = window.setTimeout(async () => {
       const query = searchQuery.trim();
-      if (!query || query.length < 2 || !STATS_API_URL) {
+      if (!query || query.length < 2 || !STATS_API_URL || !authToken) {
         setSearchResults([]);
         return;
       }
@@ -502,7 +651,10 @@ export default function App() {
       setIsSearching(true);
       try {
         const response = await fetch(`${STATS_API_URL}/api/search-players?nickname=${encodeURIComponent(query)}`, {
-          headers: { Accept: "application/json" },
+          headers: {
+            Accept: "application/json",
+            Authorization: `Bearer ${authToken}`,
+          },
         });
 
         if (!response.ok) {
@@ -529,7 +681,7 @@ export default function App() {
     }, 300);
 
     return () => window.clearTimeout(timeoutId);
-  }, [searchQuery]);
+  }, [searchQuery, authToken]);
 
   useEffect(() => {
     const tickId = window.setInterval(() => setNowTick(Date.now()), 1_000);
@@ -590,6 +742,67 @@ export default function App() {
     }));
   }, []);
 
+  if (isAuthChecking) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-zinc-950 px-6 py-8 text-zinc-100">
+        <p className="text-zinc-300">Проверка сессии...</p>
+      </main>
+    );
+  }
+
+  if (!authUsername) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-zinc-950 px-6 py-8 text-zinc-100">
+        <div className="w-full max-w-md rounded-xl border border-zinc-800 bg-zinc-900/70 p-6 sm:p-8">
+          <h1 className="text-3xl font-black tracking-tight">RETARD STATS</h1>
+
+          <div className="mt-4 inline-flex rounded-md border border-zinc-700 bg-zinc-900/80 p-1 text-sm">
+            {([
+              ["login", "Вход"],
+              ["register", "Регистрация"],
+            ] as const).map(([mode, label]) => (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => setAuthMode(mode)}
+                className={`rounded px-3 py-1 transition ${authMode === mode ? "bg-zinc-100 text-zinc-900" : "text-zinc-300 hover:bg-zinc-800"}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          <div className="mt-4 space-y-3">
+            <input
+              value={loginInput}
+              onChange={(event) => setLoginInput(event.target.value)}
+              autoComplete="username"
+              placeholder="Логин"
+              className="w-full rounded-md border border-zinc-700 bg-zinc-900/80 px-3 py-2 text-sm outline-none transition focus:border-zinc-500"
+            />
+            <input
+              type="password"
+              value={passwordInput}
+              onChange={(event) => setPasswordInput(event.target.value)}
+              autoComplete={authMode === "register" ? "new-password" : "current-password"}
+              placeholder="Пароль"
+              className="w-full rounded-md border border-zinc-700 bg-zinc-900/80 px-3 py-2 text-sm outline-none transition focus:border-zinc-500"
+            />
+            <button
+              type="button"
+              onClick={() => void submitAuth()}
+              disabled={isAuthSubmitting}
+              className="w-full rounded-md bg-zinc-100 px-3 py-2 text-sm font-semibold text-zinc-900 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isAuthSubmitting ? "Подожди..." : authMode === "register" ? "Зарегистрироваться" : "Войти"}
+            </button>
+            {authError ? <p className="text-sm text-rose-300">{authError}</p> : null}
+          </div>
+        </div>
+      </main>
+    );
+  }
+
   return (
     <main className="relative min-h-screen overflow-hidden bg-zinc-950 px-6 py-8 text-zinc-100 sm:py-12">
       <div className="hero-ambient pointer-events-none absolute inset-0" />
@@ -600,6 +813,10 @@ export default function App() {
           <p className="max-w-3xl text-zinc-300 sm:text-lg">Live FACEIT-статистика с автообновлением каждые 60 секунд.</p>
 
           <div className="flex flex-wrap items-center gap-3 text-sm text-zinc-400">
+            <span className="text-zinc-300">Аккаунт: {authUsername}</span>
+            <button type="button" onClick={() => void logout()} className="border-b border-zinc-500 text-zinc-100 transition hover:border-zinc-100">
+              Выйти
+            </button>
             <span className="inline-flex items-center gap-2">
               <span className={`h-2.5 w-2.5 rounded-full ${isRefreshing ? "bg-emerald-400 pulse-dot" : "bg-zinc-500"}`} />
               {isRefreshing ? "Обновление..." : "Данные актуальны"}

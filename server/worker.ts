@@ -145,11 +145,35 @@ type FaceitSearchResponse = {
 type Env = {
   FACEIT_API_KEY: string;
   ALLOWED_ORIGINS?: string;
+  AUTH_PEPPER?: string;
+  AUTH_STORE?: {
+    get: (key: string) => Promise<string | null>;
+    put: (key: string, value: string, options?: { expirationTtl?: number }) => Promise<void>;
+    delete: (key: string) => Promise<void>;
+  };
+};
+
+type AuthUserRecord = {
+  username: string;
+  usernameNormalized: string;
+  passwordHash: string;
+  salt: string;
+  createdAtIso: string;
+};
+
+type AuthSessionRecord = {
+  tokenHash: string;
+  username: string;
+  usernameNormalized: string;
+  expiresAt: number;
 };
 
 let memoryCache: { expiresAt: number; payload: ApiStatsResponse } | null = null;
 let lastSuccessfulPayload: ApiStatsResponse | null = null;
 const playerMemoryCache = new Map<string, { expiresAt: number; payload: PlayerViewModel }>();
+const memoryUsers = new Map<string, AuthUserRecord>();
+const memorySessions = new Map<string, AuthSessionRecord>();
+const SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
 
 function json(data: unknown, init?: ResponseInit): Response {
   return new Response(JSON.stringify(data), {
@@ -191,6 +215,270 @@ function parseDecimal(value: unknown): number {
 function parseNumber(value: unknown): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function toHex(buffer: ArrayBuffer): string {
+  return [...new Uint8Array(buffer)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function sha256Hex(input: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const digest = await crypto.subtle.digest("SHA-256", encoder.encode(input));
+  return toHex(digest);
+}
+
+function normalizeUsername(value: unknown): string {
+  return String(value ?? "").trim().toLowerCase();
+}
+
+function validateUsername(value: string): string | null {
+  if (value.length < 3 || value.length > 24) {
+    return "Логин должен быть длиной от 3 до 24 символов";
+  }
+  if (!/^[a-zA-Z0-9._-]+$/.test(value)) {
+    return "Логин может содержать только буквы, цифры, точку, дефис и _";
+  }
+  return null;
+}
+
+function validatePassword(value: string): string | null {
+  if (value.length < 6 || value.length > 72) {
+    return "Пароль должен быть длиной от 6 до 72 символов";
+  }
+  return null;
+}
+
+async function hashPassword(password: string, salt: string, env: Env): Promise<string> {
+  const encoder = new TextEncoder();
+  const pepper = String(env.AUTH_PEPPER ?? "");
+  const key = await crypto.subtle.importKey("raw", encoder.encode(`${password}:${pepper}`), "PBKDF2", false, ["deriveBits"]);
+  const bits = await crypto.subtle.deriveBits(
+    {
+      name: "PBKDF2",
+      salt: encoder.encode(salt),
+      iterations: 120_000,
+      hash: "SHA-256",
+    },
+    key,
+    256,
+  );
+  return toHex(bits);
+}
+
+async function hashSessionToken(token: string, env: Env): Promise<string> {
+  const pepper = String(env.AUTH_PEPPER ?? "");
+  return sha256Hex(`${token}:${pepper}`);
+}
+
+function hasAuthPersistenceConfigured(env: Env): boolean {
+  return Boolean(env.AUTH_STORE && env.AUTH_PEPPER);
+}
+
+function createRandomToken(bytes = 32): string {
+  const source = crypto.getRandomValues(new Uint8Array(bytes));
+  const binary = String.fromCharCode(...source);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+async function getAuthUser(normalizedUsername: string, env: Env): Promise<AuthUserRecord | null> {
+  if (!normalizedUsername) {
+    return null;
+  }
+
+  if (env.AUTH_STORE) {
+    const raw = await env.AUTH_STORE.get(`user:${normalizedUsername}`);
+    if (!raw) {
+      return null;
+    }
+    try {
+      return JSON.parse(raw) as AuthUserRecord;
+    } catch {
+      return null;
+    }
+  }
+
+  return memoryUsers.get(normalizedUsername) ?? null;
+}
+
+async function putAuthUser(user: AuthUserRecord, env: Env): Promise<void> {
+  const key = `user:${user.usernameNormalized}`;
+  if (env.AUTH_STORE) {
+    await env.AUTH_STORE.put(key, JSON.stringify(user));
+    return;
+  }
+  memoryUsers.set(user.usernameNormalized, user);
+}
+
+async function getAuthSession(token: string, env: Env): Promise<AuthSessionRecord | null> {
+  if (!token) {
+    return null;
+  }
+
+  if (env.AUTH_STORE) {
+    const raw = await env.AUTH_STORE.get(`session:${token}`);
+    if (!raw) {
+      return null;
+    }
+    try {
+      return JSON.parse(raw) as AuthSessionRecord;
+    } catch {
+      return null;
+    }
+  }
+
+  return memorySessions.get(token) ?? null;
+}
+
+async function putAuthSession(session: AuthSessionRecord, env: Env): Promise<void> {
+  const key = `session:${session.tokenHash}`;
+  if (env.AUTH_STORE) {
+    await env.AUTH_STORE.put(key, JSON.stringify(session), { expirationTtl: SESSION_TTL_SECONDS });
+    return;
+  }
+  memorySessions.set(session.tokenHash, session);
+}
+
+async function deleteAuthSession(token: string, env: Env): Promise<void> {
+  if (!token) {
+    return;
+  }
+
+  if (env.AUTH_STORE) {
+    await env.AUTH_STORE.delete(`session:${token}`);
+    return;
+  }
+  memorySessions.delete(token);
+}
+
+function readBearerToken(request: Request): string {
+  const authHeader = request.headers.get("authorization") ?? "";
+  const match = authHeader.match(/^Bearer\s+(.+)$/i);
+  return match?.[1]?.trim() ?? "";
+}
+
+async function requireAuth(request: Request, env: Env): Promise<AuthSessionRecord | null> {
+  if (!hasAuthPersistenceConfigured(env)) {
+    return null;
+  }
+
+  const token = readBearerToken(request);
+  if (!token) {
+    return null;
+  }
+
+  const tokenHash = await hashSessionToken(token, env);
+
+  const session = await getAuthSession(tokenHash, env);
+  if (!session) {
+    return null;
+  }
+
+  if (session.expiresAt <= Date.now()) {
+    await deleteAuthSession(tokenHash, env);
+    return null;
+  }
+
+  return session;
+}
+
+async function registerUser(request: Request, env: Env): Promise<Response> {
+  if (!hasAuthPersistenceConfigured(env)) {
+    return json({ error: "Auth storage is not configured on server" }, { status: 500 });
+  }
+
+  let payload: { username?: string; password?: string };
+  try {
+    payload = (await request.json()) as { username?: string; password?: string };
+  } catch {
+    return json({ error: "Некорректный JSON" }, { status: 400 });
+  }
+
+  const username = String(payload.username ?? "").trim();
+  const password = String(payload.password ?? "");
+  const usernameError = validateUsername(username);
+  if (usernameError) {
+    return json({ error: usernameError }, { status: 400 });
+  }
+
+  const passwordError = validatePassword(password);
+  if (passwordError) {
+    return json({ error: passwordError }, { status: 400 });
+  }
+
+  const usernameNormalized = normalizeUsername(username);
+  const existing = await getAuthUser(usernameNormalized, env);
+  if (existing) {
+    return json({ error: "Такой логин уже существует" }, { status: 409 });
+  }
+
+  const salt = createRandomToken(16);
+  const passwordHash = await hashPassword(password, salt, env);
+  const user: AuthUserRecord = {
+    username,
+    usernameNormalized,
+    passwordHash,
+    salt,
+    createdAtIso: new Date().toISOString(),
+  };
+
+  await putAuthUser(user, env);
+  return json({ ok: true, username: user.username });
+}
+
+async function loginUser(request: Request, env: Env): Promise<Response> {
+  if (!hasAuthPersistenceConfigured(env)) {
+    return json({ error: "Auth storage is not configured on server" }, { status: 500 });
+  }
+
+  let payload: { username?: string; password?: string };
+  try {
+    payload = (await request.json()) as { username?: string; password?: string };
+  } catch {
+    return json({ error: "Некорректный JSON" }, { status: 400 });
+  }
+
+  const username = String(payload.username ?? "").trim();
+  const password = String(payload.password ?? "");
+  const usernameNormalized = normalizeUsername(username);
+  if (!usernameNormalized || !password) {
+    return json({ error: "Нужны логин и пароль" }, { status: 400 });
+  }
+
+  const user = await getAuthUser(usernameNormalized, env);
+  if (!user) {
+    return json({ error: "Неверный логин или пароль" }, { status: 401 });
+  }
+
+  const passwordHash = await hashPassword(password, user.salt, env);
+  if (passwordHash !== user.passwordHash) {
+    return json({ error: "Неверный логин или пароль" }, { status: 401 });
+  }
+
+  const token = createRandomToken(32);
+  const tokenHash = await hashSessionToken(token, env);
+  const expiresAt = Date.now() + SESSION_TTL_SECONDS * 1000;
+  const session: AuthSessionRecord = {
+    tokenHash,
+    username: user.username,
+    usernameNormalized: user.usernameNormalized,
+    expiresAt,
+  };
+  await putAuthSession(session, env);
+
+  return json({
+    token,
+    username: user.username,
+    expiresAtIso: new Date(expiresAt).toISOString(),
+  });
+}
+
+async function logoutUser(request: Request, env: Env): Promise<Response> {
+  const token = readBearerToken(request);
+  if (token) {
+    const tokenHash = await hashSessionToken(token, env);
+    await deleteAuthSession(tokenHash, env);
+  }
+  return json({ ok: true });
 }
 
 function parsePercent(value: unknown): number {
@@ -814,8 +1102,8 @@ function pickCorsOrigin(request: Request, env: Env): string {
 function corsHeaders(request: Request, env: Env): HeadersInit {
   return {
     "access-control-allow-origin": pickCorsOrigin(request, env),
-    "access-control-allow-methods": "GET,OPTIONS",
-    "access-control-allow-headers": "content-type",
+    "access-control-allow-methods": "GET,POST,OPTIONS",
+    "access-control-allow-headers": "content-type,authorization",
     "access-control-max-age": "86400",
   };
 }
@@ -833,9 +1121,60 @@ export default {
       return json({ ok: true }, { headers });
     }
 
-    const validPaths = new Set(["/api/stats", "/api/player-stats", "/api/search-players"]);
+    const validPaths = new Set([
+      "/api/stats",
+      "/api/player-stats",
+      "/api/search-players",
+      "/api/auth/register",
+      "/api/auth/login",
+      "/api/auth/me",
+      "/api/auth/logout",
+    ]);
     if (!validPaths.has(url.pathname)) {
       return json({ error: "Not Found" }, { status: 404, headers });
+    }
+
+    if (!hasAuthPersistenceConfigured(env)) {
+      return json(
+        {
+          error: "AUTH_STORE and AUTH_PEPPER must be configured",
+        },
+        { status: 500, headers },
+      );
+    }
+
+    if (url.pathname === "/api/auth/register") {
+      if (request.method !== "POST") {
+        return json({ error: "Method Not Allowed" }, { status: 405, headers });
+      }
+      const response = await registerUser(request, env);
+      return new Response(response.body, { status: response.status, headers: { ...headers, "content-type": "application/json; charset=utf-8" } });
+    }
+
+    if (url.pathname === "/api/auth/login") {
+      if (request.method !== "POST") {
+        return json({ error: "Method Not Allowed" }, { status: 405, headers });
+      }
+      const response = await loginUser(request, env);
+      return new Response(response.body, { status: response.status, headers: { ...headers, "content-type": "application/json; charset=utf-8" } });
+    }
+
+    if (url.pathname === "/api/auth/me") {
+      const session = await requireAuth(request, env);
+      if (!session) {
+        return json({ error: "Unauthorized" }, { status: 401, headers });
+      }
+      return json({ username: session.username, expiresAtIso: new Date(session.expiresAt).toISOString() }, { headers });
+    }
+
+    if (url.pathname === "/api/auth/logout") {
+      const response = await logoutUser(request, env);
+      return new Response(response.body, { status: response.status, headers: { ...headers, "content-type": "application/json; charset=utf-8" } });
+    }
+
+    const session = await requireAuth(request, env);
+    if (!session) {
+      return json({ error: "Unauthorized" }, { status: 401, headers });
     }
 
     if (!env.FACEIT_API_KEY) {

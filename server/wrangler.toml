@@ -4,3 +4,7 @@ compatibility_date = "2026-01-01"
 
 [vars]
 ALLOWED_ORIGINS = "https://youngmaze.github.io,http://localhost:5173"
+
+[[kv_namespaces]]
+binding = "AUTH_STORE"
+id = "REPLACE_WITH_KV_NAMESPACE_ID"
