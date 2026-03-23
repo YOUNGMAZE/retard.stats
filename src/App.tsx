@@ -911,22 +911,27 @@ export default function App() {
 
   const effectiveLayoutMode = useMemo<LayoutMode>(() => layoutMode, [layoutMode]);
 
-  const listClassName = useMemo(() => {
-    if (effectiveLayoutMode === "row") {
-      return "grid grid-cols-1 gap-8 md:grid-cols-2";
-    }
-    if (effectiveLayoutMode === "mini") {
-      return "space-y-3";
-    }
-    return "grid grid-cols-1 gap-8 md:grid-cols-2";
-  }, [effectiveLayoutMode]);
-
   const visiblePlayers = useMemo(() => {
     const byNickname = new Map(players.map((player) => [player.nickname.toLowerCase(), player]));
     return selectedNicknames
       .map((nickname) => byNickname.get(nickname.toLowerCase()) ?? null)
       .filter((player): player is PlayerViewModel => player !== null);
   }, [players, selectedNicknames]);
+
+  const isSingleRowLayout = effectiveLayoutMode === "row" && visiblePlayers.length === 1;
+
+  const listClassName = useMemo(() => {
+    if (effectiveLayoutMode === "row") {
+      if (isSingleRowLayout) {
+        return "grid grid-cols-1 gap-8";
+      }
+      return "grid grid-cols-1 gap-8 md:grid-cols-2";
+    }
+    if (effectiveLayoutMode === "mini") {
+      return "space-y-3";
+    }
+    return "grid grid-cols-1 gap-8 md:grid-cols-2";
+  }, [effectiveLayoutMode, isSingleRowLayout]);
 
   const addPlayer = useCallback((nickname: string) => {
     const trimmed = nickname.trim();
@@ -947,17 +952,12 @@ export default function App() {
     setSelectedNicknames((previous) => previous.filter((item) => item.toLowerCase() !== nickname.toLowerCase()));
   }, []);
 
-  const toggleMapPanel = useCallback((playerId: string, panelKey: string) => {
+  const toggleMapPanel = useCallback((_playerId: string, panelKey: string) => {
     setExpandedMaps((previous) => {
-      const next: Record<string, boolean> = {};
-      for (const [key, value] of Object.entries(previous)) {
-        if (!key.startsWith(`${playerId}:`)) {
-          next[key] = value;
-        }
-      }
-
-      next[panelKey] = !previous[panelKey];
-      return next;
+      return {
+        ...previous,
+        [panelKey]: !previous[panelKey],
+      };
     });
   }, []);
 
@@ -1195,7 +1195,14 @@ export default function App() {
               }
 
               return (
-                <li key={player.playerId} className={`fade-in ${effectiveLayoutMode === "row" ? "rounded-lg border border-zinc-800/80 bg-zinc-900/40 p-4" : "py-6 sm:py-8"}`}>
+                <li
+                  key={player.playerId}
+                  className={`fade-in ${
+                    effectiveLayoutMode === "row"
+                      ? `rounded-lg border border-zinc-800/80 bg-zinc-900/40 p-4 ${isSingleRowLayout ? "md:mx-auto md:max-w-4xl" : ""}`
+                      : "py-6 sm:py-8"
+                  }`}
+                >
                   <div className="mb-4 flex items-center justify-between gap-3">
                     <div className="flex items-center gap-4">
                       <img src={player.avatar} alt={player.nickname} className="h-14 w-14 rounded-full border border-zinc-700 object-cover" />
