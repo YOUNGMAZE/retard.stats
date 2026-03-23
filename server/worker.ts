@@ -1084,6 +1084,12 @@ async function searchPlayers(query: string, env: Env): Promise<SearchApiResponse
 
 function pickCorsOrigin(request: Request, env: Env): string {
   const requestOrigin = request.headers.get("origin") ?? "";
+  if (requestOrigin.startsWith("chrome-extension://")) {
+    return requestOrigin;
+  }
+  if (requestOrigin === "null") {
+    return "*";
+  }
   const configured = (env.ALLOWED_ORIGINS ?? "")
     .split(",")
     .map((entry) => entry.trim())
