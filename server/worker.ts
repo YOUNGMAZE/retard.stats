@@ -584,16 +584,58 @@ function extractMapStats(stats: FaceitPlayerStats): MapStats[] {
       continue;
     }
 
-    const wins = parseNumber(findValueByKey(segmentStats, ["Wins", "wins"]));
     const directWinRate = parsePercent(
       findValueByKey(segmentStats, ["Win Rate %", "Win Rate", "Winrate", "win_rate", "win_rate_pct", "win_rate_percent"]),
     );
+    let wins = parseNumber(findValueByKey(segmentStats, ["Wins", "wins", "Map Wins", "map_wins"]));
+    if (wins <= 0 && directWinRate > 0 && matches > 0) {
+      wins = Math.round((matches * directWinRate) / 100);
+    }
+
+    let losses = parseNumber(findValueByKey(segmentStats, ["Losses", "losses", "Map Losses", "map_losses"]));
+    if (losses <= 0) {
+      losses = Math.max(matches - wins, 0);
+    }
+
     const computedWinRate = matches > 0 ? (wins / matches) * 100 : 0;
     const winRate = Math.max(0, Math.min(100, directWinRate > 0 ? directWinRate : computedWinRate));
-    const losses = Math.max(matches - wins, 0);
 
-    const kd = parseDecimal(findValueByKey(segmentStats, ["Average K/D Ratio", "Average KD Ratio", "K/D Ratio", "K/D", "kd"]));
-    const avgKills = parseDecimal(findValueByKey(segmentStats, ["Average Kills", "Avg Kills", "average_kills", "avg_kills"]));
+    let kd = parseDecimal(
+      findValueByKey(segmentStats, [
+        "Average K/D Ratio",
+        "Average KD Ratio",
+        "Average K/D",
+        "K/D Ratio",
+        "K/D",
+        "KD Ratio",
+        "kdr",
+        "avg_kd",
+      ]),
+    );
+
+    const totalKills = parseDecimal(
+      findValueByKey(segmentStats, ["Kills", "kills", "Total Kills", "total_kills", "Total K" ]),
+    );
+    const totalDeaths = parseDecimal(
+      findValueByKey(segmentStats, ["Deaths", "deaths", "Total Deaths", "total_deaths", "Total D"]),
+    );
+
+    if (kd <= 0 && totalKills > 0 && totalDeaths > 0) {
+      kd = totalKills / totalDeaths;
+    }
+
+    let avgKills = parseDecimal(
+      findValueByKey(segmentStats, [
+        "Average Kills",
+        "Average Kills per Match",
+        "Avg Kills",
+        "average_kills",
+        "avg_kills",
+      ]),
+    );
+    if (avgKills <= 0 && totalKills > 0 && matches > 0) {
+      avgKills = totalKills / matches;
+    }
 
     const map = normalizeMapName(label);
     const prev = byMap.get(map);
